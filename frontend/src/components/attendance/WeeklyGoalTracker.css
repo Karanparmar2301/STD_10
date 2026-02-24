@@ -1,0 +1,370 @@
+/* ========== WEEKLY GOAL TRACKER STYLES ========== */
+
+/* Global Icon Fix */
+svg, .icon {
+    display: inline-flex;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+h2, h3, p {
+    margin: 0;
+}
+
+.weekly-goal-card {
+    background: linear-gradient(135deg, #5f6cff 0%, #7b4dff 100%);
+    border-radius: 20px;
+    padding: 24px;
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+    color: white;
+}
+
+.goal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.header-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.header-badges {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.goal-header h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: white;
+    margin: 0;
+}
+
+.star-badge {
+    background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+    color: #2C3E50;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 700;
+    box-shadow: 0 4px 12px rgba(255, 215, 0, 0.4);
+}
+
+/* Confetti */
+.confetti-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 100;
+    overflow: hidden;
+}
+
+.confetti-piece {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+}
+
+/* Circular Progress */
+.circular-progress-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 24px 0;
+    position: relative;
+}
+
+.circular-progress {
+    width: 200px;
+    height: 200px;
+    transform: rotate(-90deg);
+}
+
+.progress-bg {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.2);
+    stroke-width: 12;
+}
+
+.progress-bar {
+    fill: none;
+    stroke: #FFD700;
+    stroke-width: 12;
+    stroke-linecap: round;
+    stroke-dasharray: 534;
+    filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.5));
+}
+
+/* Goal Center Content (Fixed Layout) */
+.goal-center {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.goal-center h2 {
+    font-size: 36px;
+    font-weight: 700;
+    color: white;
+    line-height: 1;
+}
+
+.goal-center p {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.8);
+    line-height: 1;
+}
+
+.goal-emoji {
+    font-size: 22px;
+    margin-top: 2px;
+}
+
+.progress-text-big {
+    fill: white;
+    font-size: 36px;
+    font-weight: 700;
+    text-anchor: middle;
+    transform: rotate(90deg);
+    transform-origin: center;
+}
+
+.progress-text-small {
+    fill: rgba(255, 255, 255, 0.8);
+    font-size: 14px;
+    text-anchor: middle;
+    transform: rotate(90deg);
+    transform-origin: center;
+}
+
+.progress-emoji {
+    position: absolute;
+    font-size: 48px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+}
+
+/* Linear Progress Bar - Polished */
+.linear-progress-wrapper {
+    margin: 20px 0;
+}
+
+.linear-progress-bg {
+    width: 100%;
+    height: 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.2);
+    overflow: hidden;
+}
+
+.linear-progress-fill {
+    height: 100%;
+    border-radius: 10px;
+    background: linear-gradient(90deg, #ffd700 0%, #ffae00 100%);
+    box-shadow: 0 0 12px rgba(255, 215, 0, 0.5);
+    position: relative;
+}
+
+.linear-progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.3),
+        transparent
+    );
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+.progress-percentage {
+    text-align: center;
+    font-size: 18px;
+    font-weight: 700;
+    margin-top: 8px;
+    color: white;
+}
+
+/* Goal Message */
+.goal-message {
+    text-align: center;
+    font-size: 18px;
+    font-weight: 600;
+    margin: 16px 0;
+    color: white;
+}
+
+/* Stats */
+.goal-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.stat-item {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+}
+
+.stat-item:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: translateY(-2px);
+}
+
+.stat-icon {
+    font-size: 32px;
+    margin-bottom: 8px;
+}
+
+.stat-label {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 4px;
+    font-weight: 500;
+}
+
+.stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: white;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .goal-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .header-badges {
+        width: 100%;
+    }
+
+    .weekly-goal-card {
+        padding: 20px;
+    }
+
+    .goal-header h3 {
+        font-size: 18px;
+    }
+
+    .circular-progress {
+        width: 180px;
+        height: 180px;
+    }
+
+    .goal-center h2 {
+        font-size: 32px;
+    }
+
+    .goal-center p {
+        font-size: 13px;
+    }
+
+    .goal-emoji {
+        font-size: 20px;
+    }
+
+    .stat-icon {
+        font-size: 28px;
+    }
+
+    .stat-value {
+        font-size: 20px;
+    }
+}
+
+@media (max-width: 480px) {
+    .weekly-goal-card {
+        padding: 16px;
+    }
+
+    .goal-header h3 {
+        font-size: 16px;
+    }
+
+    .circular-progress {
+        width: 160px;
+        height: 160px;
+    }
+
+    .goal-center h2 {
+        font-size: 28px;
+    }
+
+    .goal-center p {
+        font-size: 12px;
+    }
+
+    .goal-emoji {
+        font-size: 18px;
+    }
+
+    .goal-stats {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+
+    .stat-item {
+        padding: 12px;
+    }
+
+    .stat-icon {
+        font-size: 24px;
+    }
+
+    .stat-value {
+        font-size: 18px;
+    }
+
+    .star-badge {
+        font-size: 12px;
+        padding: 6px 12px;
+    }
+}

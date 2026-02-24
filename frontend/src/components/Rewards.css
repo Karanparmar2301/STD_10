@@ -1,0 +1,555 @@
+/* ═══════════════════════════════════════════════════
+   REWARDS & ACHIEVEMENTS — Ultra Modern Gamified UI
+   ═══════════════════════════════════════════════════ */
+
+/* ── Root ── */
+.rw-root {
+    padding: 2rem 2.5rem;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+.rw-page-title {
+    font-size: 1.75rem;
+    font-weight: 800;
+    color: #1e293b;
+    -webkit-text-fill-color: #1e293b;
+    margin: 0 0 1.75rem;
+}
+
+.rw-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+/* ── Badge Unlock Toast ── */
+.rw-toast {
+    position: fixed;
+    top: 88px;
+    right: 24px;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: white;
+    border-radius: 16px;
+    padding: 14px 20px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    border-left: 4px solid #6366f1;
+}
+
+.rw-toast-icon { font-size: 2.25rem; }
+
+.rw-toast-title {
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: #1e293b;
+    -webkit-text-fill-color: #1e293b;
+    margin: 0 0 2px;
+}
+
+.rw-toast-sub {
+    font-size: 0.8125rem;
+    color: #6b7280;
+    -webkit-text-fill-color: #6b7280;
+    margin: 0;
+}
+
+/* ══════════════════════════════════════════
+   SECTION 1 — HERO CARD
+   ══════════════════════════════════════════ */
+.rw-hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: 24px;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #ec4899 100%);
+    padding: 2.5rem 2.75rem;
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    box-shadow: 0 16px 48px rgba(99, 102, 241, 0.35);
+}
+
+/* Sparkles */
+.rw-sparkle {
+    position: absolute;
+    color: rgba(255, 255, 255, 0.55);
+    pointer-events: none;
+    user-select: none;
+    font-size: 14px;
+}
+
+/* Left side */
+.rw-hero-left {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-shrink: 0;
+}
+
+.rw-trophy {
+    font-size: 5rem;
+    line-height: 1;
+    filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.3));
+}
+
+.rw-hero-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.8);
+    -webkit-text-fill-color: rgba(255, 255, 255, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 6px;
+}
+
+.rw-hero-points {
+    font-size: 4rem;
+    font-weight: 900;
+    color: white;
+    -webkit-text-fill-color: white;
+    line-height: 1;
+    margin: 0;
+    letter-spacing: -2px;
+}
+
+/* Divider */
+.rw-hero-divider {
+    width: 1px;
+    height: 110px;
+    background: rgba(255, 255, 255, 0.3);
+    flex-shrink: 0;
+}
+
+/* Right side */
+.rw-hero-right {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    flex: 1;
+}
+
+.rw-hero-stat {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.rw-hero-stat-icon {
+    font-size: 1.5rem;
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.rw-hero-stat-val {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: white;
+    -webkit-text-fill-color: white;
+    margin: 0 0 2px;
+    line-height: 1;
+}
+
+.rw-hero-stat-lbl {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.72);
+    -webkit-text-fill-color: rgba(255, 255, 255, 0.72);
+    font-weight: 500;
+    margin: 0;
+}
+
+/* ══════════════════════════════════════════
+   SECTION 2 — LEVEL PROGRESS CARD
+   ══════════════════════════════════════════ */
+.rw-card {
+    background: white;
+    border-radius: 20px;
+    padding: 1.75rem 2rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.07);
+    border: 1px solid #f1f5f9;
+}
+
+.rw-card-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 1.75rem;
+}
+
+.rw-card-icon-bg {
+    font-size: 1.75rem;
+    width: 48px;
+    height: 48px;
+    background: #eef2ff;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.rw-card-title {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: #111827;
+    -webkit-text-fill-color: #111827;
+    margin: 0 0 3px;
+}
+
+.rw-card-sub {
+    font-size: 0.8125rem;
+    color: #6b7280;
+    -webkit-text-fill-color: #6b7280;
+    margin: 0;
+}
+
+.rw-level-pill {
+    margin-left: auto;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    -webkit-text-fill-color: white;
+    font-size: 0.875rem;
+    font-weight: 700;
+    padding: 6px 18px;
+    border-radius: 999px;
+    flex-shrink: 0;
+}
+
+/* Progress bar */
+.rw-progress-wrap {
+    position: relative;
+    margin-bottom: 1rem;
+    padding-bottom: 28px;
+}
+
+.rw-progress-track {
+    height: 14px;
+    background: #f1f5f9;
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+}
+
+.rw-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+    border-radius: 999px;
+    position: relative;
+    overflow: hidden;
+}
+
+.rw-progress-glow {
+    position: absolute;
+    top: 0; right: 0;
+    width: 40px; height: 100%;
+    background: rgba(255, 255, 255, 0.45);
+    filter: blur(6px);
+    border-radius: 999px;
+}
+
+.rw-progress-rocket {
+    position: absolute;
+    bottom: 0;
+    transform: translateX(-50%);
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
+.rw-progress-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #9ca3af;
+    -webkit-text-fill-color: #9ca3af;
+}
+
+.rw-progress-hint {
+    color: #6366f1;
+    -webkit-text-fill-color: #6366f1;
+    font-weight: 700;
+}
+
+/* ══════════════════════════════════════════
+   SECTION 3 — HOW TO EARN POINTS
+   ══════════════════════════════════════════ */
+.rw-section-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #111827;
+    -webkit-text-fill-color: #111827;
+    background: none;
+    -webkit-background-clip: unset;
+    background-clip: unset;
+    margin: 0 0 1.25rem;
+}
+
+.rw-earn-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+}
+
+.rw-earn-card {
+    border-radius: 18px;
+    padding: 1.75rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    text-align: center;
+    cursor: default;
+    transition: box-shadow 0.25s ease;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+}
+
+.rw-earn-icon-wrap {
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+}
+
+.rw-earn-icon { font-size: 2rem; }
+
+.rw-earn-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #111827;
+    -webkit-text-fill-color: #111827;
+    margin: 0;
+}
+
+.rw-earn-desc {
+    font-size: 0.8125rem;
+    color: #6b7280;
+    -webkit-text-fill-color: #6b7280;
+    margin: 0;
+    line-height: 1.5;
+}
+
+.rw-earn-xp {
+    margin-top: 6px;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: white;
+    -webkit-text-fill-color: white;
+    padding: 5px 16px;
+    border-radius: 999px;
+}
+
+/* ══════════════════════════════════════════
+   SECTION 4 — MILESTONES TIMELINE
+   ══════════════════════════════════════════ */
+.rw-timeline {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    padding-left: 56px;
+}
+
+.rw-timeline-line {
+    position: absolute;
+    left: 22px;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    background: linear-gradient(180deg, #6366f1, #8b5cf6, #ec4899, #d1d5db);
+    border-radius: 999px;
+}
+
+.rw-milestone {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.rw-milestone-dot {
+    position: absolute;
+    left: -44px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #f1f5f9;
+    border: 3px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.375rem;
+    flex-shrink: 0;
+    z-index: 1;
+}
+
+.rw-milestone--achieved .rw-milestone-dot {
+    border-color: transparent;
+}
+
+.rw-milestone--locked .rw-milestone-dot {
+    filter: grayscale(1);
+    opacity: 0.55;
+}
+
+.rw-milestone-card {
+    flex: 1;
+    background: white;
+    border-radius: 16px;
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    border: 1.5px solid #e5e7eb;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    transition: box-shadow 0.25s;
+}
+
+.rw-milestone--locked .rw-milestone-card {
+    opacity: 0.6;
+}
+
+.rw-milestone-name {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #374151;
+    -webkit-text-fill-color: #374151;
+    margin: 0 0 3px;
+}
+
+.rw-milestone-req {
+    font-size: 0.8125rem;
+    color: #9ca3af;
+    -webkit-text-fill-color: #9ca3af;
+    margin: 0;
+}
+
+.rw-milestone-status {
+    font-size: 0.8125rem;
+    font-weight: 700;
+    padding: 5px 14px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.rw-milestone-status--done {
+    background: #dcfce7;
+    color: #16a34a;
+    -webkit-text-fill-color: #16a34a;
+}
+
+.rw-milestone-status--locked {
+    background: #f1f5f9;
+    color: #94a3b8;
+    -webkit-text-fill-color: #94a3b8;
+}
+
+/* ── Empty State ── */
+.rw-empty {
+    background: white;
+    border-radius: 20px;
+    padding: 3rem 2rem;
+    text-align: center;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+}
+
+.rw-empty-icon { font-size: 3.5rem; display: block; margin-bottom: 1rem; }
+
+.rw-empty h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #1e293b;
+    -webkit-text-fill-color: #1e293b;
+    margin: 0 0 8px;
+}
+
+.rw-empty p {
+    color: #6b7280;
+    -webkit-text-fill-color: #6b7280;
+    margin: 0;
+}
+
+/* ══════════════════════════════════════════
+   RESPONSIVE
+   ══════════════════════════════════════════ */
+@media (max-width: 900px) {
+    .rw-earn-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .rw-hero {
+        flex-direction: column;
+        text-align: center;
+        padding: 2rem 1.5rem;
+    }
+
+    .rw-hero-left {
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .rw-hero-divider {
+        width: 80%;
+        height: 1px;
+    }
+
+    .rw-hero-right {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 1rem;
+    }
+
+    .rw-hero-stat {
+        min-width: 130px;
+    }
+}
+
+@media (max-width: 600px) {
+    .rw-root {
+        padding: 1.25rem 1rem;
+    }
+
+    .rw-earn-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .rw-hero-points {
+        font-size: 3rem;
+    }
+
+    .rw-trophy {
+        font-size: 3.5rem;
+    }
+
+    .rw-timeline {
+        padding-left: 44px;
+    }
+
+    .rw-milestone-dot {
+        left: -34px;
+        width: 36px;
+        height: 36px;
+        font-size: 1.1rem;
+    }
+
+    .rw-timeline-line {
+        left: 17px;
+    }
+
+    .rw-milestone-card {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+}
