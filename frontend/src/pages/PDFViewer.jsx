@@ -10,7 +10,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as pdfjsLib from 'pdfjs-dist';
 import HTMLFlipBook from 'react-pageflip';
-import { apiService } from '../services/api';
+import { apiService, getBackendAssetUrl, normalizeErrorMessage } from '../services/api';
 import { logActivity } from '../store/activitySlice';
 import './PDFViewer.css';
 
@@ -252,20 +252,20 @@ export default function PDFViewer() {
             const { data } = await apiService.getSubjectChapters(subject);
             setChapters(data);
             if (location.state?.file) {
-                setPdfUrl(location.state.file);
+                setPdfUrl(getBackendAssetUrl(location.state.file));
                 setPdfTitle(location.state.title || `Chapter ${chapterId}`);
                 setLoading(false);
                 return;
             }
             const chapter = data.find(c => String(c.id) === String(chapterId));
             if (chapter) {
-                setPdfUrl(chapter.file);
+                setPdfUrl(getBackendAssetUrl(chapter.file));
                 setPdfTitle(chapter.title);
             } else {
                 setError('Chapter not found in this subject.');
             }
         } catch (e) {
-            setError(e.response?.data?.detail || 'Could not load chapter data.');
+            setError(normalizeErrorMessage(e, 'Could not load chapter data.'));
         } finally {
             setLoading(false);
         }
