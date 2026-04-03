@@ -7,6 +7,7 @@ export const BACKEND_BASE_URL = rawBackendBaseUrl.replace(/\/api$/i, '');
 const API_BASE_URL = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/api` : '/api';
 const AUTH_BASE_URL = BACKEND_BASE_URL || '';
 const CHAT_URL = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/chat` : '/chat';
+const RAG_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_RAG_TIMEOUT_MS || 30000);
 
 if (BACKEND_BASE_URL) {
     axios.defaults.baseURL = BACKEND_BASE_URL;
@@ -217,6 +218,7 @@ export const apiService = {
         }
         return api.post('/assistant/rag-chat', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: Number.isFinite(RAG_REQUEST_TIMEOUT_MS) ? RAG_REQUEST_TIMEOUT_MS : 30000,
         });
     },
     rebuildRagIndex: () => api.post('/assistant/rebuild-index'),

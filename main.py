@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from typing import Optional, List, Tuple
+import asyncio
 import os
 import urllib.parse
 import sys
@@ -66,6 +67,16 @@ def rag_pipeline(question, student_name="Student", subject_filter=""):
 
 # Load environment variables
 load_dotenv()
+
+
+def _read_rag_timeout_seconds() -> float:
+    try:
+        return max(5.0, float(os.getenv("RAG_TIMEOUT_SECONDS", "25")))
+    except ValueError:
+        return 25.0
+
+
+RAG_TIMEOUT_SECONDS = _read_rag_timeout_seconds()
 
 # ── Configure Logging ────────────────────────────────────────────────────────
 import logging
@@ -151,16 +162,26 @@ async def health_check():
 
 # CORS middleware for React frontend
 # Allow all localhost/127.0.0.1 ports for development
-cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:5173,http://localhost:5174,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174")
-cors_origins = cors_origins_str.split(",")
+cors_origins_str = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:5173,http://localhost:5174,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,https://std-10.vercel.app",
+)
+cors_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
+cors_origin_regex = os.getenv("CORS_ORIGIN_REGEX", r"^https://.*\.vercel\.app$").strip() or None
+
+# Wildcard origins cannot be used with credentials=True.
+cors_allow_credentials = "*" not in cors_origins
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_credentials=True,
+    allow_origin_regex=cors_origin_regex,
+    allow_credentials=cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
+logger.info("[CORS] Configured %d explicit origins (regex=%s)", len(cors_origins), cors_origin_regex)
 
 # Mount static files for profile photos
 app.mount("/api/uploads", StaticFiles(directory="backend/uploads"), name="uploads")
@@ -2272,10 +2293,10 @@ def _build_ai_reply(intent: str, message: str, ctx: dict):
 
 async def _groq_rag_reply(message: str, student_name: str, subject_filter: str = "") -> Tuple[str, List[str]]:
     """Call Groq RAG pipeline and return (reply, suggestions)."""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, rag_pipeline, message, student_name, subject_filter
+    loop = asyncio.get_running_loop()
+    result = await asyncio.wait_for(
+        loop.run_in_executor(None, rag_pipeline, message, student_name, subject_filter),
+        timeout=RAG_TIMEOUT_SECONDS,
     )
     answer  = result.get("answer") or ""
     sources = result.get("sources", [])
@@ -2427,17 +2448,22 @@ async def simple_chat(
     if image:
         contents = await image.read()
         mime = image.content_type or "image/png"
-        import asyncio
-        extracted = await asyncio.get_event_loop().run_in_executor(
+        loop = asyncio.get_running_loop()
+        extracted = await loop.run_in_executor(
             None, _extract_image_text, contents, mime
         )
         if extracted:
             question = f"{question} {extracted}".strip() if question else extracted
 
-    import asyncio
-    result = await asyncio.get_event_loop().run_in_executor(
-        None, rag_pipeline, question
-    )
+    loop = asyncio.get_running_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, rag_pipeline, question),
+            timeout=RAG_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="RAG request timed out. Please try a shorter question.")
+
     return {
         "question": question,
         "answer": result.get("answer", ""),
@@ -2488,13 +2514,29 @@ async def rag_chat(
         if not _ensure_rag_pipeline_loaded():
             raise HTTPException(status_code=503, detail="RAG engine not available")
 
-        import asyncio
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, rag_pipeline, message, student_name, subject_filter
-        )
+        loop = asyncio.get_running_loop()
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, rag_pipeline, message, student_name, subject_filter),
+                timeout=RAG_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            timeout_reply = (
+                "I am taking too long to search the textbook right now. "
+                "Please try a shorter question or choose a specific subject."
+            )
+            return JSONResponse({
+                "reply":        timeout_reply,
+                "answer":       timeout_reply,
+                "sources":      [],
+                "chunks_found": 0,
+                "elapsed_sec":  RAG_TIMEOUT_SECONDS,
+                "suggestions":  ["Ask a shorter question", "Choose a specific chapter", "Try again"],
+                "timestamp":    datetime.now().isoformat(),
+                "intent":       "rag-timeout",
+            })
 
-        answer  = result.get("answer", "")
+        answer  = result.get("answer") or "I could not find a clear textbook answer right now."
         sources = result.get("sources", [])
         reply   = answer
 
