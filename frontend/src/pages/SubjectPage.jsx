@@ -4,15 +4,13 @@ import { useSelector, useDispatch } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import { setActiveSection } from '../store/uiSlice';
 import { logActivity } from '../store/activitySlice';
-import { apiService } from '../services/api';
+import { apiService, getBackendAssetUrl, normalizeErrorMessage } from '../services/api';
 import './SubjectPage.css';
-
-const BACKEND = import.meta.env.MODE === 'development' ? 'http://127.0.0.1:8000' : '';
 
 async function downloadChapter(filePath, filename) {
     try {
         const token = localStorage.getItem('authToken');
-        const url   = `${BACKEND}${filePath}`;
+        const url   = getBackendAssetUrl(filePath);
         const res   = await fetch(url, {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
@@ -272,7 +270,7 @@ export default function SubjectPage() {
             setChapters(Array.isArray(data) ? data : []);
         } catch (e) {
             const status = e.response?.status;
-            const detail = e.response?.data?.detail || '';
+            const detail = normalizeErrorMessage(e, 'Could not load chapters');
             // Treat 404 / "not found" as simply no PDFs uploaded yet
             if (status === 404 || detail.toLowerCase().includes('not found')) {
                 setChapters([]);

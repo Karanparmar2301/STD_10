@@ -1,10 +1,41 @@
 import axios from 'axios';
 
-// All requests go through the Vite proxy (both dev and prod)
-const API_BASE_URL = '/api';
+const rawBackendBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+export const BACKEND_BASE_URL = rawBackendBaseUrl.replace(/\/api$/i, '');
 
-// Auth endpoints also go through the Vite proxy
-const AUTH_BASE_URL = '';
+// In production, set VITE_API_BASE_URL=https://your-render-service.onrender.com
+const API_BASE_URL = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/api` : '/api';
+const AUTH_BASE_URL = BACKEND_BASE_URL || '';
+const CHAT_URL = BACKEND_BASE_URL ? `${BACKEND_BASE_URL}/chat` : '/chat';
+
+if (BACKEND_BASE_URL) {
+    axios.defaults.baseURL = BACKEND_BASE_URL;
+}
+
+export function getBackendAssetUrl(path) {
+    if (!path) return BACKEND_BASE_URL;
+    if (/^https?:\/\//i.test(path)) return path;
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    return BACKEND_BASE_URL ? `${BACKEND_BASE_URL}${normalizedPath}` : normalizedPath;
+}
+
+export function normalizeErrorMessage(errorOrValue, fallback = 'Request failed') {
+    const candidate =
+        errorOrValue?.response?.data?.detail ??
+        errorOrValue?.response?.data?.error ??
+        errorOrValue?.response?.data?.message ??
+        errorOrValue?.message ??
+        errorOrValue;
+
+    if (typeof candidate === 'string') return candidate;
+    if (candidate == null) return fallback;
+
+    try {
+        return JSON.stringify(candidate);
+    } catch {
+        return fallback;
+    }
+}
 
 // Create axios instance
 const api = axios.create({
@@ -220,7 +251,7 @@ export const apiService = {
 
 // Create a separate axios instance for auth without interceptors affecting auth
 const authAxios = axios.create({
-    baseURL: '',
+    baseURL: AUTH_BASE_URL,
     headers: {
         'Content-Type': 'application/json'
     }
@@ -247,7 +278,7 @@ export async function askAI(message, image) {
   if (image) {
     formData.append('image', image);
   }
-  const response = await fetch('/chat', {
+    const response = await fetch(CHAT_URL, {
     method: 'POST',
     body: formData,
   });

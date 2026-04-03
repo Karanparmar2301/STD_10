@@ -1,6 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import axios from 'axios';
-import { authApi } from '../services/api';
+import { apiService, authApi, normalizeErrorMessage } from '../services/api';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function decodeTokenPayload(token) {
@@ -23,7 +22,7 @@ export const signupUser = createAsyncThunk(
             console.log('[Auth] Signup successful');
             return res.data;
         } catch (err) {
-            const errorMsg = err.response?.data?.detail || err.message || 'Signup failed';
+            const errorMsg = normalizeErrorMessage(err, 'Signup failed');
             console.error('[Auth] Signup error:', errorMsg);
             return rejectWithValue(errorMsg);
         }
@@ -50,21 +49,16 @@ export const loginUser = createAsyncThunk(
 
             // Fetch full profile data immediately after login
             try {
-                const profileRes = await axios.get(`/api/dashboard/${uid}`, {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    }
-                });
+                const profileRes = await apiService.getStudentData(uid);
                 console.log('[Auth] Profile data fetched successfully');
-                return { ...profileRes.data, token, refresh_token };
+                return { uid, ...profileRes.data, token, refresh_token };
             } catch (profileErr) {
                 // If dashboard fetch fails, return basic login data with tokens
-                console.warn('[Auth] Could not fetch full profile after login, using basic data:', profileErr.message);
-                return { ...res.data, token, refresh_token };
+                console.warn('[Auth] Could not fetch full profile after login, using basic data:', normalizeErrorMessage(profileErr));
+                return { uid, ...res.data, token, refresh_token };
             }
         } catch (err) {
-            const errorMsg = err.response?.data?.detail || err.response?.data?.error || err.message || 'Invalid email or password';
+            const errorMsg = normalizeErrorMessage(err, 'Invalid email or password');
             console.error('[Auth] Login error:', errorMsg);
             return rejectWithValue(errorMsg);
         }
@@ -97,17 +91,12 @@ export const checkSession = createAsyncThunk(
 
                 // Fetch complete profile from dashboard endpoint
                 try {
-                    const profileRes = await axios.get(`/api/dashboard/${uid}`, {
-                        headers: {
-                            Authorization: `Bearer ${token}`,
-                            'Content-Type': 'application/json'
-                        }
-                    });
+                    const profileRes = await apiService.getStudentData(uid);
                     console.log('[Auth] Session restored successfully');
-                    return { ...profileRes.data, token };
+                    return { uid, ...profileRes.data, token };
                 } catch (dashErr) {
-                    console.warn('[Auth] Could not fetch full profile in session check:', dashErr.message);
-                    return { ...res.data, token };
+                    console.warn('[Auth] Could not fetch full profile in session check:', normalizeErrorMessage(dashErr));
+                    return { uid, ...res.data, token };
                 }
             } catch (authErr) {
                 // Token verification failed
@@ -121,7 +110,11 @@ export const checkSession = createAsyncThunk(
                         try {
                             console.log('[Auth] Token expired, attempting refresh');
                             const refreshRes = await authApi.refresh(refreshToken);
-                            const newToken = refreshRes.data.token;
+                            const newToken = refreshRes.data.token || refreshRes.data.access_token;
+
+                            if (!newToken) {
+                                throw new Error('Token refresh succeeded but no access token was returned');
+                            }
 
                             // Save new token
                             localStorage.setItem('authToken', newToken);
@@ -130,18 +123,13 @@ export const checkSession = createAsyncThunk(
                             const retryRes = await authApi.getMe(newToken);
                             const uid = retryRes.data.uid;
 
-                            const profileRes = await axios.get(`/api/dashboard/${uid}`, {
-                                headers: {
-                                    Authorization: `Bearer ${newToken}`,
-                                    'Content-Type': 'application/json'
-                                }
-                            });
+                            const profileRes = await apiService.getStudentData(uid);
 
                             console.log('[Auth] Session restored after token refresh');
-                            return { ...profileRes.data, token: newToken };
+                            return { uid, ...profileRes.data, token: newToken };
 
                         } catch (refreshErr) {
-                            console.error('[Auth] Token refresh failed:', refreshErr.message);
+                            console.error('[Auth] Token refresh failed:', normalizeErrorMessage(refreshErr));
                             localStorage.removeItem('authToken');
                             localStorage.removeItem('refreshToken');
                             return null;
@@ -149,13 +137,13 @@ export const checkSession = createAsyncThunk(
                     }
                 }
 
-                console.error('[Auth] Token verification failed:', authErr.message);
+                console.error('[Auth] Token verification failed:', normalizeErrorMessage(authErr));
                 localStorage.removeItem('authToken');
                 localStorage.removeItem('refreshToken');
                 return null;
             }
         } catch (err) {
-            console.error('[Auth] Session check failed:', err.message);
+            console.error('[Auth] Session check failed:', normalizeErrorMessage(err));
             localStorage.removeItem('authToken');
             localStorage.removeItem('refreshToken');
             return null;

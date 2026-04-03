@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, Link } from 'react-router-dom';
 import { signupUser, clearError } from '../store/authSlice';
+import { normalizeErrorMessage } from '../services/api';
 import './Auth.css';
 
 function Signup() {
@@ -16,6 +17,8 @@ function Signup() {
     const dispatch = useDispatch();
     const navigate = useNavigate();
     const { loading, error } = useSelector((state) => state.auth);
+    const errorText = error ? normalizeErrorMessage(error, 'Signup failed') : '';
+    const userAlreadyExists = errorText.toLowerCase().includes('already registered');
 
     const handleChange = (e) => {
         setFormData({
@@ -58,11 +61,11 @@ function Signup() {
                 </div>
 
                 <form onSubmit={handleSubmit} className="auth-form">
-                    {error && (
+                    {errorText && (
                         <div className="error-message">
-                            {error.includes('already registered')
+                            {userAlreadyExists
                                 ? 'User already exists. Please sign in'
-                                : error}
+                                : errorText}
                         </div>
                     )}
 

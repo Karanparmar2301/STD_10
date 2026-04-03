@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, Link } from 'react-router-dom';
 import { loginUser, clearError } from '../store/authSlice';
+import { normalizeErrorMessage } from '../services/api';
 import './Auth.css';
 
 function Login() {
@@ -10,6 +11,10 @@ function Login() {
     const dispatch = useDispatch();
     const navigate = useNavigate();
     const { loading, error } = useSelector((state) => state.auth);
+    const errorText = error ? normalizeErrorMessage(error, 'Login failed') : '';
+    const hasInvalidCredentialsError =
+        errorText.toLowerCase().includes('invalid login credentials') ||
+        errorText.toLowerCase().includes('invalid email');
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -40,11 +45,11 @@ function Login() {
                 </div>
 
                 <form onSubmit={handleSubmit} className="auth-form">
-                    {error && (
+                    {errorText && (
                         <div className="error-message">
-                            {error.includes('Invalid login credentials') || error.includes('Invalid email')
+                            {hasInvalidCredentialsError
                                 ? 'Email or password is incorrect'
-                                : error}
+                                : errorText}
                         </div>
                     )}
 
