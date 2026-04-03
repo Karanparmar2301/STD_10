@@ -13,21 +13,17 @@ import { fetchInsights, fetchAnalytics } from '../store/insightsSlice';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
 import SkeletonLoader from '../components/SkeletonLoader';
-import ProfileCompletionModal from '../components/ProfileCompletionModal';
-import ProfileEditDrawer from '../components/ProfileEditDrawer';
-
-// Eager-loaded sections
-import DashboardOverview from '../components/DashboardOverview';
-import Attendance from '../components/Attendance';
-import Homework from '../components/Homework';
-import Announcements from '../components/Announcements';
-
-import Timetable from '../components/Timetable';
-import Performance from '../components/Performance';
-
-// Lazy-loaded sections
+// Lazy-loaded sections and overlays
+const DashboardOverview = lazy(() => import('../components/DashboardOverview'));
+const Attendance = lazy(() => import('../components/Attendance'));
+const Homework = lazy(() => import('../components/Homework'));
+const Announcements = lazy(() => import('../components/Announcements'));
+const Timetable = lazy(() => import('../components/Timetable'));
+const Performance = lazy(() => import('../components/Performance'));
 const Books = lazy(() => import('../components/Books'));
 const AIAssistant = lazy(() => import('../components/AIAssistant'));
+const ProfileCompletionModal = lazy(() => import('../components/ProfileCompletionModal'));
+const ProfileEditDrawer = lazy(() => import('../components/ProfileEditDrawer'));
 
 import './Dashboard.css';
 
@@ -166,7 +162,9 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <DashboardOverview />
+                        <Suspense fallback={<SkeletonLoader type="card" count={3} />}>
+                            <DashboardOverview />
+                        </Suspense>
                     </motion.div>
                 );
             case 'attendance':
@@ -179,7 +177,9 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <Attendance profile={user} />
+                        <Suspense fallback={<SkeletonLoader type="card" count={2} />}>
+                            <Attendance profile={user} />
+                        </Suspense>
                     </motion.div>
                 );
             case 'homework':
@@ -192,7 +192,9 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <Homework data={user} />
+                        <Suspense fallback={<SkeletonLoader type="card" count={2} />}>
+                            <Homework data={user} />
+                        </Suspense>
                     </motion.div>
                 );
             case 'announcements':
@@ -205,7 +207,9 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <Announcements data={user} />
+                        <Suspense fallback={<SkeletonLoader type="card" count={3} />}>
+                            <Announcements data={user} />
+                        </Suspense>
                     </motion.div>
                 );
             case 'books':
@@ -233,7 +237,9 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <Performance />
+                        <Suspense fallback={<SkeletonLoader type="card" count={2} />}>
+                            <Performance />
+                        </Suspense>
                     </motion.div>
                 );
             case 'timetable':
@@ -246,7 +252,9 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <Timetable />
+                        <Suspense fallback={<SkeletonLoader type="card" count={2} />}>
+                            <Timetable />
+                        </Suspense>
                     </motion.div>
                 );
             case 'ai-assistant':
@@ -274,7 +282,9 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <DashboardOverview />
+                        <Suspense fallback={<SkeletonLoader type="card" count={3} />}>
+                            <DashboardOverview />
+                        </Suspense>
                     </motion.div>
                 );
         }
@@ -329,16 +339,20 @@ function Dashboard() {
 
 
             {/* Profile Completion Modal (First Login) */}
-            <ProfileCompletionModal
-                isOpen={showCompletionModal}
-                onComplete={handleProfileComplete}
-            />
+            <Suspense fallback={null}>
+                <ProfileCompletionModal
+                    isOpen={showCompletionModal}
+                    onComplete={handleProfileComplete}
+                />
+            </Suspense>
 
             {/* Profile Edit Drawer */}
-            <ProfileEditDrawer
-                isOpen={showEditDrawer}
-                onClose={handleEditDrawerClose}
-            />
+            <Suspense fallback={null}>
+                <ProfileEditDrawer
+                    isOpen={showEditDrawer}
+                    onClose={handleEditDrawerClose}
+                />
+            </Suspense>
         </div>
     );
 }
