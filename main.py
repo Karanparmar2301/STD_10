@@ -27,17 +27,41 @@ from backend.exception_handlers import register_all_handlers, AuthenticationErro
 from backend.secure_storage import get_users_storage
 from backend.jwt_manager import get_jwt_manager
 
-# Groq RAG Engine (Production pipeline: Hybrid search + Reranker + Groq)
-try:
-    from backend.rag.rag_pipeline import generate_answer as _rag_generate
-    RAG_ENGINE_AVAILABLE = True
-    def rag_pipeline(question, student_name="Student", subject_filter=""):
-        result = _rag_generate(question, student_name=student_name, subject_filter=subject_filter)
-        return result
-except ImportError as _rag_err:
-    print(f"[WARNING] RAG engine not loaded: {_rag_err}")
-    RAG_ENGINE_AVAILABLE = False
-    def rag_pipeline(question, student_name="Student", subject_filter=""):
+# Groq RAG Engine (lazy-loaded to keep startup fast on Render)
+_rag_generate = None
+_rag_import_error = None
+RAG_ENGINE_AVAILABLE = False
+
+
+def _ensure_rag_pipeline_loaded() -> bool:
+    """Load RAG pipeline on first use to avoid blocking web-service boot."""
+    global _rag_generate, _rag_import_error, RAG_ENGINE_AVAILABLE
+
+    if _rag_generate is not None:
+        return True
+    if _rag_import_error is not None:
+        return False
+
+    try:
+        from backend.rag.rag_pipeline import generate_answer as _rag_generate_impl
+        _rag_generate = _rag_generate_impl
+        RAG_ENGINE_AVAILABLE = True
+        print("[RAG] Pipeline loaded on demand")
+        return True
+    except Exception as rag_err:
+        _rag_import_error = rag_err
+        RAG_ENGINE_AVAILABLE = False
+        print(f"[WARNING] RAG engine not loaded: {rag_err}")
+        return False
+
+
+def rag_pipeline(question, student_name="Student", subject_filter=""):
+    if not _ensure_rag_pipeline_loaded():
+        return {"answer": None, "sources": [], "chunks_found": 0}
+    try:
+        return _rag_generate(question, student_name=student_name, subject_filter=subject_filter)
+    except Exception as rag_err:
+        print(f"[WARNING] RAG pipeline execution failed: {rag_err}")
         return {"answer": None, "sources": [], "chunks_found": 0}
 
 # Load environment variables
@@ -101,7 +125,7 @@ async def _startup_build_rag_index():
     if RAG_ENGINE_AVAILABLE:
         logger.info("[RAG] Production pipeline loaded (hybrid search + reranker + Groq)")
     else:
-        logger.warning("[RAG] Pipeline not available")
+        logger.info("[RAG] Lazy loading enabled; pipeline initializes on first RAG request")
 
 
 @app.get("/health")
@@ -2310,7 +2334,11 @@ async def assistant_chat(
 
         # Route to RAG by default — only skip for clearly non-academic intents
         _NON_RAG_INTENTS = {'progress', 'streak', 'rewards', 'homework', 'games', 'greeting', 'math', 'spelling', 'motivation'}
-        if RAG_ENGINE_AVAILABLE and intent not in _NON_RAG_INTENTS:
+        rag_available = False
+        if intent not in _NON_RAG_INTENTS:
+            rag_available = _ensure_rag_pipeline_loaded()
+
+        if rag_available and intent not in _NON_RAG_INTENTS:
             try:
                 reply, suggestions = await _groq_rag_reply(
                     message, student_ctx.get("name", "Student")
@@ -2392,7 +2420,7 @@ async def simple_chat(
     image: UploadFile = File(None),
 ):
     question = message.strip()
-    if not RAG_ENGINE_AVAILABLE:
+    if not _ensure_rag_pipeline_loaded():
         raise HTTPException(status_code=503, detail="RAG engine not available")
 
     # Extract text from image if provided
@@ -2457,7 +2485,7 @@ async def rag_chat(
         if len(message) > 3000:
             raise HTTPException(status_code=400, detail="Message too long")
 
-        if not RAG_ENGINE_AVAILABLE:
+        if not _ensure_rag_pipeline_loaded():
             raise HTTPException(status_code=503, detail="RAG engine not available")
 
         import asyncio
