@@ -188,15 +188,6 @@ function AIAssistant({ data }) {
             >
               <div className="aia-chat-area">
                 {/* Active suggestion chips (compact row) */}
-                {hasMessages && suggestions.length > 0 && (
-                  <div className="aia-chips-row">
-                    {suggestions.slice(0, 3).map((s, i) => (
-                      <button key={i} className="aia-chip-sm" onClick={() => handleSend(s)}>
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                )}
 
                 <AnimatePresence initial={false}>
                   {messages.map((msg) => (

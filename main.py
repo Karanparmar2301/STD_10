@@ -2423,16 +2423,16 @@ async def simple_chat(
 # ── Dedicated Groq RAG Chat endpoint ─────────────────────────────────────────
 @app.post("/api/assistant/rag-chat")
 async def rag_chat(
+    background_tasks: BackgroundTasks,
     message: str = Form(None),
     student_name: str = Form("Student"),
     subject_filter: str = Form(""),
     image: UploadFile = File(None),
     authorization: str = Header(None),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """
     Groq-powered RAG chat endpoint.
-    Retrieves relevant NCERT PDF chunks, then answers via Groq llama3-8b-8192.
+    Retrieves relevant NCERT PDF chunks, then answers via Groq llama-3.1-8b-instant.
     Accepts optional image upload for OCR-based questions.
     Falls back to rule-based reply if Groq is unavailable.
     """
@@ -2484,8 +2484,11 @@ async def rag_chat(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"RAG chat error: {e}")
-        raise HTTPException(status_code=500, detail="RAG assistant temporarily unavailable")
+        import traceback
+        error_msg = f"RAG chat error: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        logging.error(error_msg)
+        raise HTTPException(status_code=500, detail=f"RAG assistant error: {str(e)}")
 
 
 @app.post("/api/assistant/rebuild-index")

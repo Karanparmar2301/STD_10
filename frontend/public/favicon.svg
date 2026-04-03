@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Class 10 Portal icon">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6C6FD6" />
+      <stop offset="100%" stop-color="#5B5FC7" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)" />
+  <path d="M32 14 10 24 32 34 54 24 32 14Z" fill="#ffffff" />
+  <path d="M17 30v8c0 4 7 8 15 8s15-4 15-8v-8l-15 7-15-7Z" fill="#dbeafe" />
+  <path d="M54 26v14" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" />
+  <circle cx="54" cy="42" r="3" fill="#f59e0b" />
+</svg>

@@ -1,0 +1,51 @@
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1775152315.384802   38256 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1775152320.364117   38256 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+WARNING:tensorflow:From C:\Users\karan\AppData\Local\Programs\Python\Python311\Lib\site-packages\tf_keras\src\losses.py:2976: The name tf.losses.sparse_softmax_cross_entropy is deprecated. Please use tf.compat.v1.losses.sparse_softmax_cross_entropy instead.
+
+C:\class 10\student dashboard\backend\rag\embeddings.py:19: LangChainDeprecationWarning: The class `HuggingFaceEmbeddings` was deprecated in LangChain 0.2.2 and will be removed in 1.0. An updated version of the class exists in the `langchain-huggingface package and should be used instead. To use it run `pip install -U `langchain-huggingface` and import as `from `langchain_huggingface import HuggingFaceEmbeddings``.
+  embedding_model = HuggingFaceEmbeddings(
+============================================================
+Step 1: Loading and chunking PDFs (chunk_size=500, overlap=120)
+============================================================
+
+Loading PDFs:   0%|          | 0/15 [00:00<?, ?file/s]C:\Users\karan\AppData\Local\Programs\Python\Python311\Lib\site-packages\pypdf\_crypt_providers\_cryptography.py:32: CryptographyDeprecationWarning: ARC4 has been moved to cryptography.hazmat.decrepit.ciphers.algorithms.ARC4 and will be removed from cryptography.hazmat.primitives.ciphers.algorithms in 48.0.0.
+  from cryptography.hazmat.primitives.ciphers.algorithms import AES, ARC4
+
+                                                      
+
+
+
+Loading PDFs:   0%|          | 0/15 [00:51<?, ?file/s]
+Traceback (most recent call last):
+  File "C:\class 10\student dashboard\backend\rag\loader.py", line 27, in load_pdfs
+    tqdm.write(f"  \u2714 Loaded: {file} ({len(docs)} pages)")
+  File "C:\Users\karan\AppData\Local\Programs\Python\Python311\Lib\site-packages\tqdm\std.py", line 722, in write
+    fp.write(s)
+  File "C:\Users\karan\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2714' in position 2: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\class 10\student dashboard\backend\rag\reingest.py", line 142, in <module>
+    reingest()
+  File "C:\class 10\student dashboard\backend\rag\reingest.py", line 37, in reingest
+    chunks = chunk_documents()
+             ^^^^^^^^^^^^^^^^^
+  File "C:\class 10\student dashboard\backend\rag\chunker.py", line 10, in chunk_documents
+    documents = load_pdfs()
+                ^^^^^^^^^^^
+  File "C:\class 10\student dashboard\backend\rag\loader.py", line 29, in load_pdfs
+    tqdm.write(f"  \u2718 Error loading {file}: {e}")
+  File "C:\Users\karan\AppData\Local\Programs\Python\Python311\Lib\site-packages\tqdm\std.py", line 722, in write
+    fp.write(s)
+  File "C:\Users\karan\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2718' in position 2: character maps to <undefined>
