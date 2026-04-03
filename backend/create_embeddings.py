@@ -1,7 +1,11 @@
 from typing import List, Dict, Any
 from chunk_documents import chunk_documents
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from tqdm import tqdm
+
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
 
 
 def create_embeddings() -> List[Dict[str, Any]]:

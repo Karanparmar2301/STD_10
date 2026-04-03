@@ -4,8 +4,12 @@ Loaded once at import time and reused across the pipeline.
 """
 import os
 from dotenv import load_dotenv
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from qdrant_client import QdrantClient
+
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # ── DNS Workaround Patch (Fixes Errno 11001: getaddrinfo failed) ─────────────
 import socket
