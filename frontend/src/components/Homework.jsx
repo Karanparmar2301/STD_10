@@ -60,13 +60,25 @@ const HomeworkBadgeModal = ({ badge, onClose }) => (
     </AnimatePresence>
 );
 
+// ── Subject filters (key must match hw.subject exactly — case-insensitive compare in slice) ──
+const SUBJECT_FILTERS = [
+    { key: 'all',             label: '📌 All',        color: '#667eea' },
+    { key: 'Mathematics',    label: '📐 Maths',       color: '#3F37C9' },
+    { key: 'English',        label: '📖 English',     color: '#2BA84A' },
+    { key: 'Hindi',          label: 'अ Hindi',        color: '#E63946' },
+    { key: 'Science',        label: '🔬 Science',     color: '#0081A7' },
+    { key: 'Fine Art',       label: '🎨 Fine Art',    color: '#9D4EDD' },
+    { key: 'Social Science', label: '🌍 Social Sci',  color: '#F77F00' },
+    { key: 'Sanskrit',       label: 'स Sanskrit',     color: '#C1121F' },
+    { key: 'PT',             label: '🏃 PT',          color: '#2EC4B6' },
+    { key: 'Voc. Education', label: '🛠️ Voc. Ed',    color: '#6A4C93' },
+];
+
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 const Homework = ({ data }) => {
     const dispatch = useDispatch();
     const [activeTab, setActiveTab] = useState('pending');
-    const [showXP, setShowXP] = useState(false);
-    const [earnedXP, setEarnedXP] = useState(0);
     const hasFetched = useRef(false);
 
     const user = useSelector(selectUser);
@@ -78,8 +90,6 @@ const Homework = ({ data }) => {
     const completingId = useSelector(selectCompletingId);
     const wrongAnswerId = useSelector(selectWrongAnswerId);
     const gamification = useSelector(selectGamificationProgress);
-    const showBadgeModal = useSelector((state) => state.gamification.showBadgeModal);
-    const newBadge = useSelector((state) => state.gamification.newBadge);
 
     // Fetch once per mount
     useEffect(() => {
@@ -104,9 +114,6 @@ const Homework = ({ data }) => {
             })).unwrap();
 
             if (result.correct) {
-                setEarnedXP(result.xp_earned || 5);
-                setShowXP(true);
-                setTimeout(() => setShowXP(false), 2200);
                 // Switch to pending tab automatically if all done
                 if (result.stats?.pending === 0) {
                     setTimeout(() => setActiveTab('completed'), 600);
@@ -128,37 +135,13 @@ const Homework = ({ data }) => {
 
     return (
         <div className="homework-page">
-            {/* Badge modal */}
-            <HomeworkBadgeModal
-                badge={showBadgeModal ? newBadge : null}
-                onClose={() => dispatch(closeBadgeModal())}
-            />
-
-            {/* XP Floating Animation */}
-            <AnimatePresence>
-                {showXP && (
-                    <motion.div
-                        className="xp-float-animation"
-                        initial={{ opacity: 0, y: 0, scale: 0.5 }}
-                        animate={{ opacity: 1, y: -110, scale: 1.2 }}
-                        exit={{ opacity: 0, y: -170, scale: 0.8 }}
-                        transition={{ duration: 1.6, ease: 'easeOut' }}
-                    >
-                        +{earnedXP} XP! 🎉
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
             {/* Page Header */}
             <div className="hw-header">
                 <div>
                     <h1 className="hw-title">
                         <span>📚</span> Homework
                     </h1>
-                    <p className="hw-subtitle">Answer correctly to earn XP!</p>
-                </div>
-                <div className="hw-xp-pill">
-                    <span>⚡</span> {gamification.totalXP} XP
+                    <p className="hw-subtitle">Answer questions to complete your assignments</p>
                 </div>
             </div>
 
@@ -199,36 +182,52 @@ const Homework = ({ data }) => {
                 </motion.div>
             </motion.div>
 
-            {/* Tabs + Subject Filter */}
+            {/* Tabs + Subject Filter — single row */}
             <div className="homework-controls">
-                <div className="tabs">
+                {/* Left: status tabs */}
+                <div className="hw-tabs">
                     <motion.button
-                        className={`tab-btn ${activeTab === 'pending' ? 'active' : ''}`}
+                        className={`hw-tab-btn${activeTab === 'pending' ? ' active' : ''}`}
                         onClick={() => setActiveTab('pending')}
                         whileTap={{ scale: 0.95 }}
                     >
-                        Pending ({stats.pending})
+                        Pending
+                        <span className="hw-tab-count">{stats.pending}</span>
                     </motion.button>
                     <motion.button
-                        className={`tab-btn ${activeTab === 'completed' ? 'active' : ''}`}
+                        className={`hw-tab-btn${activeTab === 'completed' ? ' active' : ''}`}
                         onClick={() => setActiveTab('completed')}
                         whileTap={{ scale: 0.95 }}
                     >
-                        Completed ({stats.completed}) ✓
+                        Completed
+                        <span className="hw-tab-count">{stats.completed}</span>
                     </motion.button>
                 </div>
 
+                {/* Divider */}
+                <div className="hw-divider" />
+
+                {/* Right: subject chips */}
                 <div className="subject-filter">
-                    {['all', 'math', 'english'].map((subj) => (
-                        <motion.button
-                            key={subj}
-                            className={`filter-btn ${subj} ${currentFilter === subj ? 'active' : ''}`}
-                            onClick={() => dispatch(setSubjectFilter(subj))}
-                            whileTap={{ scale: 0.95 }}
-                        >
-                            {subj === 'all' ? '📌 All' : subj === 'math' ? '🔢 Math' : '📝 English'}
-                        </motion.button>
-                    ))}
+                    {SUBJECT_FILTERS.map((subj) => {
+                        const isActive = currentFilter === subj.key;
+                        return (
+                            <motion.button
+                                key={subj.key}
+                                className={`filter-btn${isActive ? ' active' : ''}`}
+                                style={isActive ? {
+                                    background: subj.color,
+                                    borderColor: subj.color,
+                                    color: '#fff',
+                                    boxShadow: `0 3px 12px ${subj.color}55`
+                                } : {}}
+                                onClick={() => dispatch(setSubjectFilter(subj.key))}
+                                whileTap={{ scale: 0.93 }}
+                            >
+                                {subj.label}
+                            </motion.button>
+                        );
+                    })}
                 </div>
             </div>
 

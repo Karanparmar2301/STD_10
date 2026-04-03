@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDispatch, useSelector } from 'react-redux';
 import { updateProfile } from '../store/studentSlice';
+import { setUser } from '../store/authSlice';
 import './ProfileEditDrawer.css';
 
 /**
@@ -13,7 +14,7 @@ import './ProfileEditDrawer.css';
  */
 function ProfileEditDrawer({ isOpen, onClose }) {
     const dispatch = useDispatch();
-    const profile = useSelector((state) => state.student.profile);
+    const user = useSelector((state) => state.auth.user);
     const loading = useSelector((state) => state.student.loading);
     const error = useSelector((state) => state.student.error);
 
@@ -29,17 +30,17 @@ function ProfileEditDrawer({ isOpen, onClose }) {
     const [errors, setErrors] = useState({});
 
     useEffect(() => {
-        if (profile && isOpen) {
+        if (user && isOpen) {
             setFormData({
-                student_name: profile.student_name || '',
-                class_section: profile.class_section || '',
-                father_name: profile.father_name || '',
-                mother_name: profile.mother_name || '',
-                mobile: profile.mobile || '',
-                address: profile.address || ''
+                student_name: user.student_name || '',
+                class_section: user.class_section || '',
+                father_name: user.father_name || '',
+                mother_name: user.mother_name || '',
+                mobile: user.mobile || '',
+                address: user.address || ''
             });
         }
-    }, [profile, isOpen]);
+    }, [user, isOpen]);
 
     const validateForm = () => {
         const newErrors = {};
@@ -97,7 +98,11 @@ function ProfileEditDrawer({ isOpen, onClose }) {
         }
 
         try {
-            await dispatch(updateProfile(formData)).unwrap();
+            const result = await dispatch(updateProfile(formData)).unwrap();
+            
+            // Sync with global auth state for real-time dashboard updates
+            dispatch(setUser({ ...user, ...result }));
+            
             onClose();
         } catch (err) {
             console.error('Profile update failed:', err);
@@ -185,7 +190,7 @@ function ProfileEditDrawer({ isOpen, onClose }) {
                                         value={formData.class_section}
                                         onChange={handleChange}
                                         className={`drawer-input ${errors.class_section ? 'error' : ''}`}
-                                        placeholder="e.g., 1-A"
+                                        placeholder="e.g., 10-A"
                                     />
                                     {errors.class_section && (
                                         <span className="drawer-error">{errors.class_section}</span>

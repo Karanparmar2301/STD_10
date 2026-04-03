@@ -10,7 +10,7 @@ taskkill /F /IM python.exe 2>nul
 timeout /t 2 /nobreak >nul
 
 echo [2/4] Starting Backend Server (Port 8000)...
-start "Backend - FastAPI" cmd /k "cd /d "%~dp0" && python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000"
+start "Backend - FastAPI" cmd /k "cd /d "%~dp0" && .venv\Scripts\python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000"
 timeout /t 3 /nobreak >nul
 
 echo [3/4] Starting Frontend Server (Port 3000)...

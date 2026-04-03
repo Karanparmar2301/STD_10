@@ -1,56 +1,38 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
+import confetti from 'canvas-confetti';
 import { closeLevelUpModal } from '../store/gamificationSlice';
 import './CelebrationScreen.css';
 
-/* ─── Canvas confetti (no library needed) ────────────────────────────────── */
-function launchConfetti(canvas) {
-    const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+/* ─── Firecracker Blast Effect ───────────────────────────────────────────── */
+function launchFirecrackers() {
+    const duration = 3000;
+    const end = Date.now() + duration;
 
-    const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#fbbf24', '#34d399', '#60a5fa', '#f87171'];
-    const PIECES = 180;
-
-    const particles = Array.from({ length: PIECES }, () => ({
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height - canvas.height,
-        w: 8 + Math.random() * 8,
-        h: 4 + Math.random() * 4,
-        color: COLORS[Math.floor(Math.random() * COLORS.length)],
-        vx: (Math.random() - 0.5) * 4,
-        vy: 2 + Math.random() * 4,
-        angle: Math.random() * Math.PI * 2,
-        spin: (Math.random() - 0.5) * 0.2,
-    }));
-
-    let frame;
-
-    const draw = () => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        let alive = false;
-        particles.forEach((p) => {
-            p.x += p.vx;
-            p.y += p.vy;
-            p.angle += p.spin;
-            p.vy += 0.05; // gravity
-            if (p.y < canvas.height + 20) alive = true;
-
-            ctx.save();
-            ctx.translate(p.x, p.y);
-            ctx.rotate(p.angle);
-            ctx.fillStyle = p.color;
-            ctx.globalAlpha = Math.max(0, 1 - p.y / canvas.height);
-            ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-            ctx.restore();
+    const firecracker = () => {
+        confetti({
+            particleCount: 150,
+            spread: 120,
+            startVelocity: 60,
+            origin: { y: 0.6 },
+            colors: ['#6366f1', '#8b5cf6', '#ec4899', '#fbbf24', '#34d399', '#60a5fa', '#f87171'],
         });
-        if (alive) frame = requestAnimationFrame(draw);
-        else ctx.clearRect(0, 0, canvas.width, canvas.height);
     };
 
-    draw();
-    return () => cancelAnimationFrame(frame);
+    // First blast
+    firecracker();
+
+    // Repeated blasts every 400ms
+    const interval = setInterval(() => {
+        if (Date.now() > end) {
+            clearInterval(interval);
+        } else {
+            firecracker();
+        }
+    }, 400);
+
+    return () => clearInterval(interval);
 }
 
 /* ─── Badge label helper ─────────────────────────────────────────────────── */
@@ -65,8 +47,7 @@ function getLevelBadge(level) {
 export default function CelebrationScreen() {
     const dispatch = useDispatch();
     const { showLevelUpModal, level, totalXP } = useSelector((s) => s.gamification);
-    const canvasRef = useRef(null);
-    const stopConfettiRef = useRef(null);
+    const stopFirecrackersRef = useRef(null);
 
     const badge = getLevelBadge(level);
 
@@ -74,20 +55,20 @@ export default function CelebrationScreen() {
         dispatch(closeLevelUpModal());
     }, [dispatch]);
 
-    // Launch confetti when modal opens
+    // Launch firecracker blast when modal opens
     useEffect(() => {
-        if (showLevelUpModal && canvasRef.current) {
-            stopConfettiRef.current = launchConfetti(canvasRef.current);
+        if (showLevelUpModal) {
+            stopFirecrackersRef.current = launchFirecrackers();
         }
         return () => {
-            if (stopConfettiRef.current) stopConfettiRef.current();
+            if (stopFirecrackersRef.current) stopFirecrackersRef.current();
         };
     }, [showLevelUpModal]);
 
-    // Auto-close after 6 seconds
+    // Auto-close after 4 seconds
     useEffect(() => {
         if (!showLevelUpModal) return;
-        const t = setTimeout(handleClose, 6000);
+        const t = setTimeout(handleClose, 4000);
         return () => clearTimeout(t);
     }, [showLevelUpModal, handleClose]);
 
@@ -102,9 +83,6 @@ export default function CelebrationScreen() {
                     transition={{ duration: 0.3 }}
                     onClick={handleClose}
                 >
-                    {/* Confetti canvas */}
-                    <canvas ref={canvasRef} className="cel-canvas" />
-
                     {/* Modal card */}
                     <motion.div
                         className="cel-modal"

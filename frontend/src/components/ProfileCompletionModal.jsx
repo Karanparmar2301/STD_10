@@ -169,7 +169,7 @@ function ProfileCompletionModal({ isOpen, onComplete }) {
                                         value={formData.class_section}
                                         onChange={handleChange}
                                         className={`form-input ${errors.class_section ? 'error' : ''}`}
-                                        placeholder="e.g., 1-A"
+                                        placeholder="e.g., 10-A"
                                     />
                                     {errors.class_section && (
                                         <span className="error-text">{errors.class_section}</span>

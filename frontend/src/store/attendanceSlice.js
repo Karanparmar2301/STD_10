@@ -75,23 +75,43 @@ const attendanceSlice = createSlice({
         },
 
         calculateStats: (state) => {
-            const records = state.records;
+            const allRecords = state.records;
+            // Exclude Sundays — strict Mon–Sat school week
+            const WORKING_DAYS = [1, 2, 3, 4, 5, 6];
+            const records = allRecords
+                .filter(r => {
+                    const d = new Date(r.date || r.attendance_date);
+                    return WORKING_DAYS.includes(d.getDay());
+                })
+                .sort((a, b) =>
+                    new Date(a.date || a.attendance_date) -
+                    new Date(b.date || b.attendance_date)
+                );
+
             const totalDays = records.length;
-            const presentDays = records.filter(r => r.status === 'present').length;
+            const presentDays = records.filter(r =>
+                r.status?.toLowerCase() === 'present'
+            ).length;
             const absentDays = totalDays - presentDays;
 
             state.stats.totalDays = totalDays;
             state.stats.presentDays = presentDays;
             state.stats.absentDays = absentDays;
-            state.stats.percentage = totalDays > 0 ? (presentDays / totalDays) * 100 : 0;
+            state.stats.percentage =
+                totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
 
-            // Calculate streak
+            // Date-aware streak: Sat→Mon gap (2 days over Sunday) is valid
             let streak = 0;
             for (let i = records.length - 1; i >= 0; i--) {
-                if (records[i].status === 'present') {
-                    streak++;
-                } else {
-                    break;
+                if (records[i].status?.toLowerCase() !== 'present') break;
+                streak++;
+                if (i > 0) {
+                    const curr = new Date(records[i].date || records[i].attendance_date);
+                    const prev = new Date(records[i - 1].date || records[i - 1].attendance_date);
+                    const diffDays = Math.round((curr - prev) / 86400000);
+                    if (diffDays === 1) continue;                      // consecutive school day
+                    if (diffDays === 2 && prev.getDay() === 6) continue; // Sat→Sun gap→Mon
+                    break; // any other gap ends streak
                 }
             }
             state.stats.streak = streak;
@@ -167,36 +187,55 @@ export const selectPerfectAttendanceBadge = createSelector(
     (stats) => stats.streak >= 30
 );
 
-// Weekly Summary Selector (Last 7 days)
+// Weekly Summary Selector (Last 6 school days — Mon–Sat, no Sundays, no holidays)
 export const selectWeeklySummary = createSelector(
-    [(state) => state.attendance.records],
-    (records) => {
-        const last7Days = records.slice(-7);
-        const presentCount = last7Days.filter(r => r.status === 'present' || r.status === 'Present').length;
-        const absentCount = last7Days.length - presentCount;
-        const weeklyPercentage = last7Days.length > 0 
-            ? Math.round((presentCount / last7Days.length) * 100) 
-            : 0;
-        
+    [
+        (state) => state.attendance.records,
+        (state) => state.holidays?.list ?? [],
+    ],
+    (records, holidayList) => {
+        const holidayDates = new Set(holidayList.map((h) => h.date));
+        // Filter out Sundays AND holidays first
+        const schoolRecords = records.filter((r) => {
+            const d = new Date(r.date || r.attendance_date);
+            const dateKey = r.date || r.attendance_date;
+            return d.getDay() !== 0 && !holidayDates.has(dateKey);
+        });
+        const last6Days = schoolRecords.slice(-6);
+        const presentCount = last6Days.filter(
+            (r) => r.status === 'present' || r.status === 'Present'
+        ).length;
+        const absentCount = last6Days.length - presentCount;
+        const weeklyPercentage =
+            last6Days.length > 0
+                ? Math.round((presentCount / last6Days.length) * 100)
+                : 0;
         return {
             presentCount,
             absentCount,
-            totalDays: last7Days.length,
-            percentage: weeklyPercentage
+            totalDays: last6Days.length,
+            percentage: weeklyPercentage,
         };
     }
 );
 
-// Calendar Data Selector (Transform records to calendar format)
+// Calendar Data Selector — includes holiday status
 export const selectCalendarData = createSelector(
-    [(state) => state.attendance.records],
-    (records) => {
+    [
+        (state) => state.attendance.records,
+        (state) => state.holidays?.list ?? [],
+    ],
+    (records, holidayList) => {
         const calendarMap = {};
-        records.forEach(record => {
+        records.forEach((record) => {
             const dateKey = record.date || record.attendance_date;
             if (dateKey) {
                 calendarMap[dateKey] = record.status?.toLowerCase() || 'present';
             }
+        });
+        // Overwrite with 'holiday' for any holiday date
+        holidayList.forEach((h) => {
+            calendarMap[h.date] = 'holiday';
         });
         return calendarMap;
     }
@@ -220,48 +259,88 @@ export const selectMotivationalMessage = createSelector(
     }
 );
 
-// Heatmap Data Selector (365-day grid)
+// Heatmap Data Selector — Sundays excluded, holidays marked
 export const selectHeatmapData = createSelector(
-    [(state) => state.attendance.records],
-    (records) => {
+    [
+        (state) => state.attendance.records,
+        (state) => state.holidays?.list ?? [],
+    ],
+    (records, holidayList) => {
         const heatmapMap = {};
-        records.forEach(record => {
+        const WORKING_DAYS = [1, 2, 3, 4, 5, 6];
+        const holidayDates = new Set(holidayList.map((h) => h.date));
+        records.forEach((record) => {
             const dateKey = record.date || record.attendance_date;
             if (dateKey) {
-                heatmapMap[dateKey] = record.status?.toLowerCase() || 'present';
+                const d = new Date(dateKey);
+                if (WORKING_DAYS.includes(d.getDay())) {
+                    // Holiday overrides present/absent
+                    heatmapMap[dateKey] = holidayDates.has(dateKey)
+                        ? 'holiday'
+                        : (record.status?.toLowerCase() || 'present');
+                }
+            }
+        });
+        // Also mark holidays with no attendance record
+        holidayList.forEach((h) => {
+            const d = new Date(h.date);
+            if (WORKING_DAYS.includes(d.getDay())) {
+                heatmapMap[h.date] = 'holiday';
             }
         });
         return heatmapMap;
     }
 );
 
-// Weekly Attendance Selector (for goal tracking)
+// Weekly Attendance Selector (Mon–Sat 6-day school week, holidays excluded)
 export const selectWeeklyAttendance = createSelector(
-    [(state) => state.attendance.records],
-    (records) => {
+    [
+        (state) => state.attendance.records,
+        (state) => state.holidays?.list ?? [],
+    ],
+    (records, holidayList) => {
+        const holidayDates = new Set(holidayList.map((h) => h.date));
         const today = new Date();
+        today.setHours(23, 59, 59, 999);
+        // Find start of current school week (Monday)
         const startOfWeek = new Date(today);
-        startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
-        
-        const weekRecords = records.filter(record => {
+        const dayOfWeek = startOfWeek.getDay(); // 0=Sun, 1=Mon … 6=Sat
+        const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        startOfWeek.setDate(startOfWeek.getDate() - daysFromMonday);
+        startOfWeek.setHours(0, 0, 0, 0);
+
+        const weekRecords = records.filter((record) => {
             const recordDate = new Date(record.date || record.attendance_date);
-            return recordDate >= startOfWeek && recordDate <= today;
+            const dateKey = record.date || record.attendance_date;
+            return (
+                recordDate >= startOfWeek &&
+                recordDate <= today &&
+                recordDate.getDay() !== 0 && // Skip Sundays
+                !holidayDates.has(dateKey)   // Skip holidays
+            );
         });
-        
-        const present = weekRecords.filter(r => 
-            r.status?.toLowerCase() === 'present'
+
+        // Count holidays in the current week (they reduce the "working" goal)
+        let holidaysThisWeek = 0;
+        for (let d = new Date(startOfWeek); d <= today; d.setDate(d.getDate() + 1)) {
+            const dk = d.toISOString().split('T')[0];
+            if (d.getDay() !== 0 && holidayDates.has(dk)) holidaysThisWeek++;
+        }
+
+        const present = weekRecords.filter(
+            (r) => r.status?.toLowerCase() === 'present'
         ).length;
-        const absent = weekRecords.filter(r => 
-            r.status?.toLowerCase() === 'absent'
+        const absent = weekRecords.filter(
+            (r) => r.status?.toLowerCase() === 'absent'
         ).length;
-        const goal = 5; // Default weekly goal
+        const goal = Math.max(1, 6 - holidaysThisWeek);
         const progress = goal > 0 ? Math.round((present / goal) * 100) : 0;
-        
+
         return {
             present,
             absent,
             goal,
-            progress: Math.min(progress, 100) // Cap at 100%
+            progress: Math.min(progress, 100),
         };
     }
 );
@@ -270,31 +349,41 @@ export const selectWeeklyAttendance = createSelector(
 export const selectAttendanceAlerts = createSelector(
     [
         (state) => state.attendance.records,
-        selectAttendancePercentage
+        selectAttendancePercentage,
+        (state) => state.holidays?.list ?? [],
     ],
-    (records, percentage) => {
-        const today = new Date().toISOString().split('T')[0];
-        const last7Days = records.slice(-7);
-        
-        // Check if attendance marked today
-        const markedToday = records.some(r => 
-            (r.date || r.attendance_date) === today
-        );
-        
-        // Check low attendance
+    (records, percentage, holidayList) => {
+        const today = new Date();
+        const todayKey = today.toISOString().split('T')[0];
+        const isTodaySunday = today.getDay() === 0;
+        const holidayDates = new Set(holidayList.map((h) => h.date));
+        const isTodayHoliday = holidayDates.has(todayKey);
+
+        // Last 6 school days (no Sundays, no holidays)
+        const schoolRecords = records.filter((r) => {
+            const d = new Date(r.date || r.attendance_date);
+            const dateKey = r.date || r.attendance_date;
+            return d.getDay() !== 0 && !holidayDates.has(dateKey);
+        });
+        const last6Days = schoolRecords.slice(-6);
+
+        const markedToday =
+            isTodaySunday ||
+            isTodayHoliday ||
+            records.some((r) => (r.date || r.attendance_date) === todayKey);
+
         const lowAttendance = percentage < 80;
-        
-        // Check frequent absences (3+ in last 7 days)
-        const recentAbsences = last7Days.filter(r => 
-            r.status?.toLowerCase() === 'absent'
+
+        const recentAbsences = last6Days.filter(
+            (r) => r.status?.toLowerCase() === 'absent'
         ).length;
         const frequentAbsence = recentAbsences >= 3;
-        
+
         return {
             missingToday: !markedToday,
             lowAttendance,
             frequentAbsence,
-            hasAlerts: !markedToday || lowAttendance || frequentAbsence
+            hasAlerts: !markedToday || lowAttendance || frequentAbsence,
         };
     }
 );

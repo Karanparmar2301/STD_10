@@ -8,7 +8,6 @@ const initialState = {
         attendance: false,
         homework: false,
         announcements: false,
-        rewards: false,
         games: false,
         aiAssistant: false
     },

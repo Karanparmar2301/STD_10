@@ -9,6 +9,10 @@ import announcementsReducer from './announcementsSlice';
 import aiReducer from './aiSlice';
 import gamesReducer from './gamesSlice';
 import insightsReducer from './insightsSlice';
+import holidaysReducer from './holidaysSlice';
+import timetableReducer from './timetableSlice';
+import performanceReducer from './performanceSlice';
+import activityReducer from './activitySlice';
 
 // ── Action type strings (avoids importing from the actual slices to prevent circular deps) ──
 const SUBMIT_HOMEWORK_FULFILLED  = 'homework/submit/fulfilled';
@@ -81,8 +85,10 @@ listenerMiddleware.startListening({
         await new Promise(r => setTimeout(r, 1500));
 
         const { fetchInsights, fetchAnalytics } = await import('./insightsSlice');
+        const { fetchActivities } = await import('./activitySlice');
         listenerApi.dispatch(fetchInsights(uid));
         listenerApi.dispatch(fetchAnalytics(uid));
+        listenerApi.dispatch(fetchActivities({ uid, limit: 20 }));
     },
 });
 
@@ -98,6 +104,10 @@ export const store = configureStore({
         ai: aiReducer,
         games: gamesReducer,
         insights: insightsReducer,
+        holidays: holidaysReducer,
+        timetable: timetableReducer,
+        performance: performanceReducer,
+        activities: activityReducer,
     },
     middleware: (getDefaultMiddleware) =>
         getDefaultMiddleware({

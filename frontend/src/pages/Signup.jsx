@@ -8,6 +8,7 @@ function Signup() {
     const [formData, setFormData] = useState({
         name: '',
         studentId: '',
+        classSection: '',
         email: '',
         password: '',
         confirmPassword: ''
@@ -34,11 +35,14 @@ function Signup() {
 
         const result = await dispatch(signupUser({
             email: formData.email,
-            password: formData.password
+            password: formData.password,
+            name: formData.name,
+            studentId: formData.studentId,
+            classSection: formData.classSection,
         }));
 
         if (result.type === 'auth/signup/fulfilled') {
-            navigate('/verify-email');
+            navigate('/');  // Redirect to login — no email verify needed
         }
     };
 
@@ -46,8 +50,11 @@ function Signup() {
         <div className="auth-container">
             <div className="auth-card">
                 <div className="auth-header">
-                    <h1>🎓 Create Account</h1>
-                    <p>Join our student dashboard platform</p>
+                    <h1>
+                        <span className="auth-emoji" aria-hidden="true">🎓</span>
+                        <span className="auth-title-text">Create Account</span>
+                    </h1>
+                    <p>Join the Class 10 Portal platform</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="auth-form">
@@ -81,6 +88,19 @@ function Signup() {
                             value={formData.studentId}
                             onChange={handleChange}
                             placeholder="e.g., STU001"
+                            required
+                        />
+                    </div>
+
+                    <div className="form-group">
+                        <label htmlFor="classSection">Class Section</label>
+                        <input
+                            type="text"
+                            id="classSection"
+                            name="classSection"
+                            value={formData.classSection}
+                            onChange={handleChange}
+                            placeholder="e.g., 9A"
                             required
                         />
                     </div>

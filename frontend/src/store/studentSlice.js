@@ -97,6 +97,42 @@ export const updateProfile = createAsyncThunk(
     }
 );
 
+export const uploadProfilePhoto = createAsyncThunk(
+    'student/uploadProfilePhoto',
+    async (file, { getState, rejectWithValue }) => {
+        try {
+            const { auth } = getState();
+            if (!auth.user?.uid) {
+                return rejectWithValue('User not authenticated');
+            }
+
+            // Validate file type
+            const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+            if (!allowedTypes.includes(file.type)) {
+                return rejectWithValue('Invalid file type. Please upload PNG, JPEG, or WEBP image.');
+            }
+
+            // Validate file size (2MB max)
+            const maxSize = 2 * 1024 * 1024; // 2MB
+            if (file.size > maxSize) {
+                return rejectWithValue('File too large. Maximum size is 2MB.');
+            }
+
+            // Create FormData
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await apiService.uploadProfilePhoto(formData);
+            return response.data;
+        } catch (error) {
+            if (error.response?.data?.detail) {
+                return rejectWithValue(error.response.data.detail);
+            }
+            return rejectWithValue(error.message || 'Failed to upload photo');
+        }
+    }
+);
+
 export const completeGame = createAsyncThunk(
     'student/completeGame',
     async (gameData, { getState, rejectWithValue }) => {
@@ -142,7 +178,9 @@ const studentSlice = createSlice({
         highScore: 0,
         currentLevel: 1,
         loading: false,
-        error: null
+        error: null,
+        photoUploadStatus: 'idle', // 'idle', 'uploading', 'success', 'error'
+        photoUploadError: null
     },
     reducers: {
         clearStudentError: (state) => {
@@ -240,6 +278,22 @@ const studentSlice = createSlice({
                 state.achievementStars = action.payload.achievement_stars;
                 state.gamesPlayed = action.payload.games_played;
                 state.currentLevel = action.payload.current_level;
+            })
+            // Upload profile photo
+            .addCase(uploadProfilePhoto.pending, (state) => {
+                state.photoUploadStatus = 'uploading';
+                state.photoUploadError = null;
+            })
+            .addCase(uploadProfilePhoto.fulfilled, (state, action) => {
+                state.photoUploadStatus = 'success';
+                // Update profile with new photo URL
+                if (state.profile) {
+                    state.profile.profile_photo_url = action.payload.photo_url;
+                }
+            })
+            .addCase(uploadProfilePhoto.rejected, (state, action) => {
+                state.photoUploadStatus = 'error';
+                state.photoUploadError = action.payload;
             });
     }
 });

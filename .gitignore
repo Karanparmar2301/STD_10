@@ -28,6 +28,9 @@ env/
 
 # Environment variables
 .env
+
+# Local user store (contains password hashes — do NOT commit)
+users.json
 .env.local
 frontend/.env
 frontend/.env.local

@@ -1,24 +1,42 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { selectGamificationProgress, selectStreak } from '../store/gamificationSlice';
+import { motion } from 'framer-motion';
 import { setActiveSection } from '../store/uiSlice';
-import { useTheme } from '../store/ThemeContext';
 import ProfileMenu from './ProfileMenu';
 import './Topbar.css';
+import { selectGamificationProgress, selectStreak } from '../store/gamificationSlice';
+
+const kpiContainerVariants = {
+    hidden: { opacity: 0 },
+    show: {
+        opacity: 1,
+        transition: {
+            staggerChildren: 0.15,
+            delayChildren: 0.2,
+        },
+    },
+};
+
+const kpiItemVariants = {
+    hidden: { opacity: 0, y: 20, scale: 0.95 },
+    show: {
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        transition: {
+            duration: 0.5,
+            ease: [0.4, 0, 0.2, 1],
+        },
+    },
+};
 
 const Topbar = ({ onEditProfile }) => {
     const dispatch = useDispatch();
-    const { theme, toggleTheme } = useTheme();
     const user = useSelector((state) => state.auth.user);
-    const studentData = useSelector((state) => state.student.profile);
-    const streak = useSelector(selectStreak);
-    const { level, currentLevelXP, xpToNextLevel, progressPercentage } = useSelector(selectGamificationProgress);
 
     // Pull live data for notifications — same source as Sidebar badges
     const announcements = useSelector((state) => state.announcements.items || []);
     const homeworkPending = useSelector((state) => state.homework.pending || []);
-
-    const totalXPForLevel = currentLevelXP + xpToNextLevel;
 
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const dropdownRef = useRef(null);
@@ -82,8 +100,21 @@ const Topbar = ({ onEditProfile }) => {
         return 'Good Evening';
     };
 
-    const studentName = studentData?.student_name || user?.email?.split('@')[0] || 'Student';
-    const studentClass = studentData?.class_section || 'Class 1';
+    const studentName = user?.student_name || user?.name || user?.email?.split('@')[0] || 'Student';
+    const studentClass = user?.class_section || 'Class 10-A';
+
+    const gamification = useSelector(selectGamificationProgress);
+    const level = gamification?.level || 1;
+    const currentXP = gamification?.currentLevelXP ?? 0;
+    const nextLevelXP = 100;
+    const streak = useSelector(selectStreak) || 0;
+    const xpPercent = Math.min(Math.round((currentXP / nextLevelXP) * 100), 100);
+
+    const [clickedKpi, setClickedKpi] = useState(null);
+    const handleKpiClick = (name) => {
+        setClickedKpi(name);
+        setTimeout(() => setClickedKpi(null), 600);
+    };
 
     return (
         <div className="topbar-modern">
@@ -99,52 +130,8 @@ const Topbar = ({ onEditProfile }) => {
                 </div>
             </div>
 
-            {/* ========== CENTER SECTION: KPI Stats ========== */}
-            <div className="topbar-center-zone">
-                <div className="kpi-container">
-                    {/* Level Badge */}
-                    <div className="kpi-card level-card">
-                        <span className="level-icon">⭐</span>
-                        <span className="level-text">Level {level}</span>
-                    </div>
-
-                    {/* XP Progress Card */}
-                    <div className="kpi-card xp-card">
-                        <div className="xp-header">
-                            <span className="xp-current">{currentLevelXP}</span>
-                            <span className="xp-separator">/</span>
-                            <span className="xp-total">{totalXPForLevel} XP</span>
-                        </div>
-                        <div className="xp-progress-track">
-                            <div
-                                className="xp-progress-bar"
-                                style={{ width: `${progressPercentage}%` }}
-                            >
-                                <div className="xp-shimmer"></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Streak Badge */}
-                    <div className="kpi-card streak-card">
-                        <span className="streak-icon">🔥</span>
-                        <span className="streak-text">{streak} Day Streak</span>
-                    </div>
-                </div>
-            </div>
-
             {/* ========== RIGHT SECTION: Notifications & Profile ========== */}
             <div className="topbar-right-zone">
-                {/* Theme Toggle */}
-                <button
-                    className="theme-toggle-btn"
-                    onClick={toggleTheme}
-                    title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
-                    aria-label="Toggle theme"
-                >
-                    {theme === 'light' ? '🌙' : '☀️'}
-                </button>
-
                 {/* Notification Bell + Dropdown */}
                 <div className="notification-container" ref={dropdownRef}>
                     <div
@@ -205,6 +192,7 @@ const Topbar = ({ onEditProfile }) => {
                 <ProfileMenu
                     studentName={studentName}
                     studentClass={studentClass}
+                    profilePhotoUrl={user?.profile_photo_url}
                     onEditProfile={onEditProfile}
                 />
             </div>

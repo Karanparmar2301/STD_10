@@ -3,10 +3,9 @@ import { useSelector, useDispatch } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import { setActiveSection, setSidebarOpen } from '../store/uiSlice';
 import { selectUnreadCount } from '../store/announcementsSlice';
-import XPProgressBar from './XPProgressBar';
 import './Sidebar.css';
 
-function Sidebar({ onLogout }) {
+function Sidebar() {
     const dispatch = useDispatch();
     const activeSection = useSelector((state) => state.ui.activeSection);
     const sidebarOpen = useSelector((state) => state.ui.sidebarOpen);
@@ -17,10 +16,11 @@ function Sidebar({ onLogout }) {
     const menuItems = [
         { id: 'dashboard',    icon: '🏠', label: 'Dashboard',      badge: null },
         { id: 'attendance',   icon: '📊', label: 'Attendance',     badge: null },
-        { id: 'homework',     icon: '📚', label: 'Homework',       badge: homeworkPendingCount },
+        { id: 'timetable',    icon: '🗓️', label: 'Timetable',      badge: null },
+        { id: 'homework',     icon: '📝', label: 'Homework',       badge: homeworkPendingCount },
+        { id: 'performance',  icon: '📈', label: 'Performance',    badge: null },
         { id: 'announcements',icon: '📢', label: 'Announcements',  badge: unreadCount },
-        { id: 'rewards',      icon: '🏆', label: 'Rewards',        badge: null },
-        { id: 'games',        icon: '🎮', label: 'Learning Games', badge: null },
+        { id: 'books',         icon: '📚', label: 'My Books',        badge: null },
         { id: 'ai-assistant', icon: '🤖', label: 'AI Assistant',   badge: null }
     ];
 
@@ -39,14 +39,9 @@ function Sidebar({ onLogout }) {
                 <div className="sidebar-logo">
                     <div className="logo-icon">📚</div>
                     <div className="logo-text">
-                        <h2>Student ERP</h2>
-                        <p>Class 1 Portal</p>
+                        <h2>Class 10 Portal</h2>
+                        <p>Student ERP</p>
                     </div>
-                </div>
-
-                {/* XP Progress in Sidebar */}
-                <div className="sidebar-xp">
-                    <XPProgressBar compact={true} />
                 </div>
 
                 <nav className="menu">
@@ -80,12 +75,6 @@ function Sidebar({ onLogout }) {
                     ))}
                 </nav>
 
-                <div className="sidebar-footer">
-                    <button className="logout-btn" onClick={onLogout}>
-                        <span>🚪</span>
-                        <span>Logout</span>
-                    </button>
-                </div>
             </div>
 
             {sidebarOpen && (

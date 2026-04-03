@@ -1,6 +1,12 @@
-/* ========== WEEKLY GOAL TRACKER STYLES ========== */
+/* =========================================================================
+   WEEKLY GOAL TRACKER - PROFESSIONAL WHITE THEME
+   Premium Corporate Dashboard Style
+   ========================================================================= */
 
-/* Global Icon Fix */
+/* Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* Global Reset */
 svg, .icon {
     display: inline-flex;
     vertical-align: middle;
@@ -11,22 +17,37 @@ h2, h3, p {
     margin: 0;
 }
 
+/* =========================================================================
+   CARD CONTAINER
+   ========================================================================= */
+
 .weekly-goal-card {
-    background: linear-gradient(135deg, #5f6cff 0%, #7b4dff 100%);
+    background: #FFFFFF;
     border-radius: 20px;
-    padding: 24px;
-    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+    padding: 30px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+    border: 1px solid #E5E7EB;
     margin-bottom: 20px;
     position: relative;
-    overflow: hidden;
-    color: white;
+    overflow: visible;
+    font-family: 'Inter', 'Poppins', system-ui, -apple-system, sans-serif;
+    transition: box-shadow 0.3s ease, transform 0.3s ease;
 }
+
+.weekly-goal-card:hover {
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+}
+
+/* =========================================================================
+   HEADER SECTION
+   ========================================================================= */
 
 .goal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 24px;
+    margin-bottom: 30px;
     flex-wrap: wrap;
     gap: 12px;
 }
@@ -38,35 +59,48 @@ h2, h3, p {
 }
 
 .header-icon {
-    font-size: 18px;
+    font-size: 22px;
     flex-shrink: 0;
     line-height: 1;
-}
-
-.header-badges {
-    display: flex;
-    align-items: center;
-    gap: 12px;
 }
 
 .goal-header h3 {
     font-size: 20px;
     font-weight: 700;
-    color: white;
-    margin: 0;
+    color: #000000;
+    letter-spacing: -0.4px;
+}
+
+.header-badges {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.progress-pill {
+    background: #4F46E5;
+    color: #FFFFFF;
+    font-size: 14px;
+    font-weight: 700;
+    padding: 6px 16px;
+    border-radius: 999px;
+    letter-spacing: 0.2px;
 }
 
 .star-badge {
-    background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
-    color: #2C3E50;
-    padding: 8px 16px;
-    border-radius: 20px;
-    font-size: 14px;
+    background: linear-gradient(135deg, #FACC15 0%, #F59E0B 100%);
+    color: #000000;
+    padding: 6px 16px;
+    border-radius: 999px;
+    font-size: 13px;
     font-weight: 700;
-    box-shadow: 0 4px 12px rgba(255, 215, 0, 0.4);
+    box-shadow: 0 4px 12px rgba(250, 204, 21, 0.3);
 }
 
-/* Confetti */
+/* =========================================================================
+   CONFETTI ANIMATION (Keep for celebrations)
+   ========================================================================= */
+
 .confetti-container {
     position: absolute;
     top: 0;
@@ -85,127 +119,136 @@ h2, h3, p {
     border-radius: 2px;
 }
 
-/* Circular Progress */
+/* =========================================================================
+   CIRCULAR PROGRESS RING (CENTER)
+   ========================================================================= */
+
 .circular-progress-container {
     display: flex;
     justify-content: center;
     align-items: center;
-    margin: 24px 0;
+    margin: 25px 0 30px;
     position: relative;
 }
 
 .circular-progress {
-    width: 200px;
-    height: 200px;
+    width: 210px;
+    height: 210px;
     transform: rotate(-90deg);
+    filter: none;
 }
 
 .progress-bg {
     fill: none;
-    stroke: rgba(255, 255, 255, 0.2);
-    stroke-width: 12;
+    stroke: #E5E7EB;
+    stroke-width: 10;
 }
 
 .progress-bar {
     fill: none;
-    stroke: #FFD700;
-    stroke-width: 12;
+    stroke: #FACC15;
+    stroke-width: 10;
     stroke-linecap: round;
     stroke-dasharray: 534;
-    filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.5));
+    transition: stroke-dashoffset 0.8s ease;
 }
 
-/* Goal Center Content (Fixed Layout) */
+/* Center Text */
 .goal-center {
     position: absolute;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
 }
 
 .goal-center h2 {
-    font-size: 36px;
+    font-size: 42px;
     font-weight: 700;
-    color: white;
+    color: #000000;
     line-height: 1;
+    letter-spacing: -1.5px;
 }
 
 .goal-center p {
     font-size: 14px;
-    color: rgba(255, 255, 255, 0.8);
-    line-height: 1;
+    color: #666666;
+    font-weight: 500;
+    letter-spacing: 0.2px;
 }
 
 .goal-emoji {
-    font-size: 22px;
-    margin-top: 2px;
+    font-size: 20px;
+    margin-top: 4px;
+    font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
 }
 
-.progress-text-big {
-    fill: white;
-    font-size: 36px;
-    font-weight: 700;
-    text-anchor: middle;
-    transform: rotate(90deg);
-    transform-origin: center;
+/* =========================================================================
+   DIVIDER LINE
+   ========================================================================= */
+
+.divider {
+    width: 100%;
+    height: 1px;
+    background: #E5E7EB;
+    margin: 25px 0;
 }
 
-.progress-text-small {
-    fill: rgba(255, 255, 255, 0.8);
-    font-size: 14px;
-    text-anchor: middle;
-    transform: rotate(90deg);
-    transform-origin: center;
-}
+/* =========================================================================
+   HORIZONTAL PROGRESS BAR
+   ========================================================================= */
 
-.progress-emoji {
-    position: absolute;
-    font-size: 48px;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 10;
-}
-
-/* Linear Progress Bar - Polished */
 .linear-progress-wrapper {
-    margin: 20px 0;
+    margin: 0 0 25px;
+}
+
+.progress-labels-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.progress-message {
+    font-size: 14px;
+    font-weight: 600;
+    color: #333333;
+    letter-spacing: 0.1px;
+}
+
+.progress-percentage {
+    font-size: 16px;
+    font-weight: 700;
+    color: #000000;
+    letter-spacing: -0.3px;
 }
 
 .linear-progress-bg {
     width: 100%;
-    height: 10px;
+    height: 8px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.2);
+    background: #E5E7EB;
     overflow: hidden;
 }
 
 .linear-progress-fill {
     height: 100%;
     border-radius: 10px;
-    background: linear-gradient(90deg, #ffd700 0%, #ffae00 100%);
-    box-shadow: 0 0 12px rgba(255, 215, 0, 0.5);
+    background: #4F46E5;
     position: relative;
+    transition: width 1.2s ease;
 }
 
+/* Smooth shine animation */
 .linear-progress-fill::after {
     content: '';
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(
-        90deg,
-        transparent,
-        rgba(255, 255, 255, 0.3),
-        transparent
-    );
-    animation: shimmer 2s infinite;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    animation: shimmer 2.5s infinite;
 }
 
 @keyframes shimmer {
@@ -217,65 +260,131 @@ h2, h3, p {
     }
 }
 
-.progress-percentage {
-    text-align: center;
-    font-size: 18px;
-    font-weight: 700;
-    margin-top: 8px;
-    color: white;
-}
+/* =========================================================================
+   KPI METRIC CARDS (PRESENT / ABSENT / WORKING DAYS)
+   ========================================================================= */
 
-/* Goal Message */
-.goal-message {
-    text-align: center;
-    font-size: 18px;
-    font-weight: 600;
-    margin: 16px 0;
-    color: white;
-}
-
-/* Stats */
-.goal-stats {
+.goal-metrics {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin-top: 20px;
+    gap: 16px;
+    margin-top: 0;
 }
 
-.stat-item {
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 12px;
-    padding: 16px;
-    text-align: center;
-    backdrop-filter: blur(10px);
-    transition: all 0.3s ease;
+.metric {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px;
+    border-radius: 16px;
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+    cursor: default;
+    transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
 }
 
-.stat-item:hover {
-    background: rgba(255, 255, 255, 0.25);
-    transform: translateY(-2px);
+.metric:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
 }
 
-.stat-icon {
-    font-size: 32px;
-    margin-bottom: 8px;
+/* PRESENT Card */
+.metric.present {
+    border-color: #D1FAE5;
 }
 
-.stat-label {
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.8);
-    margin-bottom: 4px;
-    font-weight: 500;
+.metric.present:hover {
+    border-color: #A7F3D0;
 }
 
-.stat-value {
+/* ABSENT Card */
+.metric.absent {
+    border-color: #FEE2E2;
+}
+
+.metric.absent:hover {
+    border-color: #FECACA;
+}
+
+/* WORKING DAYS/GOAL Card */
+.metric.goal {
+    border-color: #E0E7FF;
+}
+
+.metric.goal:hover {
+    border-color: #C7D2FE;
+}
+
+/* ── Icon Backgrounds ────────────────────────────── */
+
+.metric-icon {
     font-size: 24px;
-    font-weight: 700;
-    color: white;
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+    transition: transform 0.2s ease;
 }
 
-/* Responsive */
+.metric.present .metric-icon {
+    background: #DCFCE7;
+    color: #16A34A;
+}
+
+.metric.absent .metric-icon {
+    background: #FEE2E2;
+    color: #DC2626;
+}
+
+.metric.goal .metric-icon {
+    background: #E0E7FF;
+    color: #4F46E5;
+}
+
+.metric:hover .metric-icon {
+    transform: scale(1.08);
+}
+
+/* ── Metric Body ────────────────────────────────── */
+
+.metric-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.metric-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #666666;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin: 0;
+}
+
+.metric-value {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -1px;
+    margin: 0;
+    color: #000000;
+}
+
+/* =========================================================================
+   RESPONSIVE DESIGN
+   ========================================================================= */
+
 @media (max-width: 768px) {
+    .weekly-goal-card {
+        padding: 24px;
+    }
+
     .goal-header {
         flex-direction: column;
         align-items: flex-start;
@@ -286,21 +395,17 @@ h2, h3, p {
         width: 100%;
     }
 
-    .weekly-goal-card {
-        padding: 20px;
-    }
-
     .goal-header h3 {
         font-size: 18px;
     }
 
     .circular-progress {
-        width: 180px;
-        height: 180px;
+        width: 190px;
+        height: 190px;
     }
 
     .goal-center h2 {
-        font-size: 32px;
+        font-size: 38px;
     }
 
     .goal-center p {
@@ -308,21 +413,23 @@ h2, h3, p {
     }
 
     .goal-emoji {
-        font-size: 20px;
+        font-size: 18px;
     }
 
-    .stat-icon {
+    .metric-icon {
+        width: 50px;
+        height: 50px;
+        font-size: 22px;
+    }
+
+    .metric-value {
         font-size: 28px;
-    }
-
-    .stat-value {
-        font-size: 20px;
     }
 }
 
 @media (max-width: 480px) {
     .weekly-goal-card {
-        padding: 16px;
+        padding: 20px;
     }
 
     .goal-header h3 {
@@ -330,12 +437,12 @@ h2, h3, p {
     }
 
     .circular-progress {
-        width: 160px;
-        height: 160px;
+        width: 170px;
+        height: 170px;
     }
 
     .goal-center h2 {
-        font-size: 28px;
+        font-size: 34px;
     }
 
     .goal-center p {
@@ -343,28 +450,60 @@ h2, h3, p {
     }
 
     .goal-emoji {
-        font-size: 18px;
+        font-size: 16px;
     }
 
-    .goal-stats {
+    .goal-metrics {
         grid-template-columns: 1fr;
-        gap: 8px;
+        gap: 12px;
     }
 
-    .stat-item {
-        padding: 12px;
+    .metric {
+        padding: 16px;
     }
 
-    .stat-icon {
-        font-size: 24px;
+    .metric-icon {
+        width: 46px;
+        height: 46px;
+        font-size: 20px;
     }
 
-    .stat-value {
-        font-size: 18px;
+    .metric-value {
+        font-size: 26px;
     }
 
     .star-badge {
         font-size: 12px;
-        padding: 6px 12px;
+        padding: 5px 12px;
+    }
+
+    .progress-pill {
+        font-size: 13px;
+        padding: 5px 14px;
+    }
+}
+
+/* =========================================================================
+   ACCESSIBILITY
+   ========================================================================= */
+
+.metric:focus-visible {
+    outline: 3px solid #4F46E5;
+    outline-offset: 3px;
+}
+
+/* =========================================================================
+   PRINT STYLES
+   ========================================================================= */
+
+@media print {
+    .weekly-goal-card {
+        box-shadow: none;
+        border: 1px solid #E5E7EB;
+        page-break-inside: avoid;
+    }
+
+    .confetti-container {
+        display: none;
     }
 }

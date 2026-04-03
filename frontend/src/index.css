@@ -7,8 +7,7 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 /* Light (default) */
-:root,
-[data-theme="light"] {
+:root {
   --theme-bg:           #f8fafc;
   --theme-bg-secondary: #f1f5f9;
   --theme-card:         #ffffff;
@@ -26,34 +25,6 @@
   --theme-bubble-ai-bg: #ffffff;
   --theme-bubble-ai-text:#1e293b;
   --theme-accent-glow:  rgba(99,102,241,0.15);
-}
-
-/* Dark */
-[data-theme="dark"] {
-  --theme-bg:           #0f172a;
-  --theme-bg-secondary: #0a0f1e;
-  --theme-card:         #1e293b;
-  --theme-card-border:  rgba(255,255,255,0.07);
-  --theme-input-bg:     #1e293b;
-  --theme-input-border: rgba(255,255,255,0.1);
-  --theme-text:         #f1f5f9;
-  --theme-text-muted:   #cbd5e1;
-  --theme-text-placeholder: #64748b;
-  --theme-sidebar-bg:   #0f172a;
-  --theme-sidebar-text: #e2e8f0;
-  --theme-topbar-bg:    #1e293b;
-  --theme-topbar-border:rgba(255,255,255,0.07);
-  --theme-topbar-shadow:0 1px 12px rgba(0,0,0,0.4);
-  --theme-bubble-ai-bg: #334155;
-  --theme-bubble-ai-text:#f1f5f9;
-  --theme-accent-glow:  rgba(99,102,241,0.25);
-}
-
-/* Smooth theme transition for ALL elements */
-*, *::before, *::after {
-  transition-property: background-color, border-color, color, box-shadow;
-  transition-duration: 300ms;
-  transition-timing-function: ease;
 }
 
 :root {
@@ -111,7 +82,7 @@ html {
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
   background: var(--theme-bg);
   color: var(--theme-text);
   line-height: 1.6;
@@ -428,14 +399,45 @@ a:hover {
 
 /* Print Styles */
 @media print {
+    /* Force landscape for all print jobs from this app */
+    @page { size: A4 landscape; margin: 14mm 8mm 8mm 8mm; }
 
-  .sidebar,
-  .menu-toggle,
-  .logout-btn {
-    display: none !important;
-  }
+    /* Hide all chrome — only the active section content prints */
+    .sidebar,
+    .sidebar-overlay,
+    .menu-toggle,
+    .logout-btn,
+    .topbar-modern,
+    .topbar-kpis,
+    .profile-menu,
+    .celebration-screen,
+    .profile-completion-modal,
+    .profile-edit-drawer,
+    .attendance-reminder {
+        display: none !important;
+    }
 
-  .main-content {
-    margin: 0 !important;
-  }
+    /* Main layout — remove sidebar gap, fill full width */
+    .dashboard-layout {
+        display: block !important;
+    }
+
+    .main-content {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+
+    .content,
+    .content--ai {
+        padding: 0 !important;
+        width: 100% !important;
+        overflow: visible !important;
+    }
+
+    /* General element resets for clean print */
+    * {
+        box-shadow: none !important;
+        text-shadow: none !important;
+    }
 }

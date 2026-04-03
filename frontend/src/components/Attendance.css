@@ -31,8 +31,17 @@ svg, .icon {
 /* ========== HEADER ========== */
 
 .attendance-header {
-    margin-bottom: 2.5rem;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     position: relative;
+}
+
+.attendance-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
 .section-title {
@@ -51,17 +60,38 @@ svg, .icon {
 .title-icon {
     font-size: 2.5rem;
     filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.1));
+    -webkit-text-fill-color: initial;
+    background: none;
+    flex-shrink: 0;
 }
 
 .header-decoration {
-    position: absolute;
-    top: -10px;
-    right: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-size: 3rem;
     filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.15));
+    transform: translateY(8px);
+    opacity: 0.9;
+    -webkit-text-fill-color: initial;
+    background: none;
+    flex-shrink: 0;
 }
 
 /* ========== GRID LAYOUT ========== */
+
+/* Smart Attendance Calendar Section */
+.smart-calendar-section {
+    width: 100%;
+    margin-bottom: 2.5rem;
+    border-radius: 20px;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 0.3s ease;
+}
+
+.smart-calendar-section:hover {
+    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.08);
+}
 
 .attendance-grid {
     display: flex;
@@ -70,11 +100,33 @@ svg, .icon {
     margin-bottom: 2rem;
 }
 
-/* Top Row - Progress & Weekly Goal */
+/* Top Row - Progress & Weekly Goal (stacked vertically) */
 .attendance-top-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+.attendance-top-row > * {
+    width: 100%;
+}
+
+@media (max-width: 1024px) {
+    .attendance-top-row {
+        gap: 20px;
+    }
+}
+
+/* Holiday KPI - Full Width row between top row and heatmap */
+.holiday-kpi-row {
+    width: 100%;
+    border-radius: 20px;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 0.3s ease;
+}
+
+.holiday-kpi-row:hover {
+    box-shadow: 0 12px 32px rgba(249, 115, 22, 0.18);
 }
 
 /* Heatmap - Full Width */
@@ -98,7 +150,6 @@ svg, .icon {
 /* ========== CARD STYLES ========== */
 
 .progress-card,
-.weekly-goal-card-wrapper,
 .stats-card,
 .calendar-card {
     background: transparent;
@@ -245,8 +296,7 @@ svg, .icon {
 
     .header-decoration {
         font-size: 2.5rem;
-        top: -5px;
-        right: 10px;
+        transform: translateY(6px);
     }
 
     .attendance-grid {
@@ -270,6 +320,10 @@ svg, .icon {
 @media (max-width: 480px) {
     .section-title {
         font-size: 1.75rem;
+    }
+
+    .header-decoration {
+        display: none;
     }
 
     .card {

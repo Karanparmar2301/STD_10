@@ -93,7 +93,7 @@ const gamificationSlice = createSlice({
 
             // Level-up detection (only once per new level)
             if (state.level > oldLevel && state.lastProcessedLevel !== state.level) {
-                state.showLevelUpModal = true;
+                // state.showLevelUpModal = true; // celebration disabled
                 state.lastProcessedLevel = state.level;
             }
 
@@ -124,7 +124,7 @@ const gamificationSlice = createSlice({
             state.xpToNextLevel = calculateXPToNextLevel(state.totalXP);
             state.recentXPGain = xpGained;
             if (state.level > oldLevel && state.lastProcessedLevel !== state.level) {
-                state.showLevelUpModal = true;
+                // state.showLevelUpModal = true; // celebration disabled
                 state.lastProcessedLevel = state.level;
             }
         },
@@ -179,7 +179,7 @@ const gamificationSlice = createSlice({
                 state.recentXPGain = payload.xp_earned ?? state.recentXPGain;
 
                 if (state.level > oldLevel && state.lastProcessedLevel !== state.level) {
-                    state.showLevelUpModal = true;
+                    // state.showLevelUpModal = true; // celebration disabled
                     state.lastProcessedLevel = state.level;
                 }
 
@@ -209,7 +209,7 @@ const gamificationSlice = createSlice({
                     state.xpToNextLevel = calculateXPToNextLevel(state.totalXP);
                     state.recentXPGain = xpGained;
                     if (state.level > oldLevel && state.lastProcessedLevel !== state.level) {
-                        state.showLevelUpModal = true;
+                        // state.showLevelUpModal = true; // celebration disabled
                         state.lastProcessedLevel = state.level;
                     }
                 }
@@ -239,7 +239,7 @@ const gamificationSlice = createSlice({
 
                 // Level-up (deduped via lastProcessedLevel)
                 if (state.level > oldLevel && state.lastProcessedLevel !== state.level) {
-                    state.showLevelUpModal  = true;
+                    // state.showLevelUpModal = true; // celebration disabled
                     state.lastProcessedLevel = state.level;
                 }
 

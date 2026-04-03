@@ -4,15 +4,15 @@ import { motion } from 'framer-motion';
 import AttendanceCalendar from './attendance/AttendanceCalendar';
 import AttendanceProgress from './attendance/AttendanceProgress';
 import AttendanceStatsCard from './attendance/AttendanceStatsCard';
-import AttendanceHeatmap from './attendance/AttendanceHeatmap';
 import WeeklyGoalTracker from './attendance/WeeklyGoalTracker';
-import AttendanceReminder from './notifications/AttendanceReminder';
+import HolidayKPI from './HolidayKPI';
 import {
     fetchAttendance,
     initializeAttendance,
     selectAttendanceLoading,
     selectAttendanceError
 } from '../store/attendanceSlice';
+import { fetchHolidays } from '../store/holidaysSlice';
 import './Attendance.css';
 
 /**
@@ -28,7 +28,7 @@ function Attendance({ profile }) {
         if (profile) {
             // Initialize attendance from profile data
             dispatch(initializeAttendance({
-                percentage: profile.attendance_percentage || 0,
+                percentage: Math.round(profile.attendance_percentage || 0),
                 presentDays: profile.present_days || 0,
                 absentDays: profile.absent_days || 0,
                 totalDays: profile.total_days || 0,
@@ -39,6 +39,9 @@ function Attendance({ profile }) {
             if (profile.uid) {
                 dispatch(fetchAttendance(profile.uid));
             }
+
+            // Fetch 2026 holiday calendar
+            dispatch(fetchHolidays());
         }
     }, [profile, dispatch]);
 
@@ -87,15 +90,17 @@ function Attendance({ profile }) {
                 className="attendance-header"
                 variants={itemVariants}
             >
-                <motion.h1
-                    className="section-title"
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.5 }}
-                >
-                    <span className="title-icon">📊</span>
-                    Attendance Tracker
-                </motion.h1>
+                <div className="attendance-header-left">
+                    <motion.h1
+                        className="section-title"
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.5 }}
+                    >
+                        <span className="title-icon">📊</span>
+                        Attendance Tracker
+                    </motion.h1>
+                </div>
                 
                 <motion.div
                     className="header-decoration"
@@ -113,8 +118,15 @@ function Attendance({ profile }) {
                 </motion.div>
             </motion.div>
 
-            {/* Smart Reminder */}
-            <AttendanceReminder />
+            {/* Smart Attendance Calendar */}
+            <motion.div
+                className="smart-calendar-section"
+                variants={itemVariants}
+                whileHover={{ y: -3 }}
+                transition={{ type: 'spring', stiffness: 300 }}
+            >
+                <AttendanceCalendar />
+            </motion.div>
 
             {/* Main Content Grid */}
             <div className="attendance-grid">
@@ -129,48 +141,28 @@ function Attendance({ profile }) {
                         <AttendanceProgress />
                     </motion.div>
 
-                    <motion.div
-                        className="weekly-goal-card-wrapper"
-                        variants={itemVariants}
-                        whileHover={{ y: -4 }}
-                        transition={{ type: 'spring', stiffness: 300 }}
-                    >
-                        <WeeklyGoalTracker />
-                    </motion.div>
+                    <WeeklyGoalTracker />
                 </div>
 
-                {/* Heatmap - Full Width */}
+                {/* Holiday KPI Row */}
                 <motion.div
-                    className="heatmap-wrapper"
+                    className="holiday-kpi-row"
+                    variants={itemVariants}
+                    whileHover={{ y: -3 }}
+                    transition={{ type: 'spring', stiffness: 300 }}
+                >
+                    <HolidayKPI />
+                </motion.div>
+
+                {/* Stats */}
+                <motion.div
+                    className="stats-card"
                     variants={itemVariants}
                     whileHover={{ y: -4 }}
                     transition={{ type: 'spring', stiffness: 300 }}
                 >
-                    <AttendanceHeatmap />
+                    <AttendanceStatsCard />
                 </motion.div>
-
-                {/* Bottom Row - Calendar & Stats */}
-                <div className="attendance-bottom-row">
-                    <motion.div
-                        className="calendar-card"
-                        variants={itemVariants}
-                    >
-                        <h2 className="card-title">
-                            <span className="title-icon">📅</span>
-                            Monthly Calendar
-                        </h2>
-                        <AttendanceCalendar />
-                    </motion.div>
-
-                    <motion.div
-                        className="stats-card"
-                        variants={itemVariants}
-                        whileHover={{ y: -4 }}
-                        transition={{ type: 'spring', stiffness: 300 }}
-                    >
-                        <AttendanceStatsCard />
-                    </motion.div>
-                </div>
             </div>
 
             {/* Floating Cloud Decoration */}

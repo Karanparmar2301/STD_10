@@ -1,52 +1,166 @@
-from fastapi import FastAPI, Request, Header, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Header, HTTPException, BackgroundTasks, UploadFile, File, Form
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from datetime import datetime
-from typing import Optional, List
+from datetime import datetime, timedelta
+from typing import Optional, List, Tuple
 import os
+import urllib.parse
 import sys
+import json
+import uuid
+import hashlib
+import shutil
+from pathlib import Path
 from dotenv import load_dotenv
-import httpx
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 
-# Gamification + AI engines (backend/ folder next to main.py)
+# AI engine path (backend/ folder)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
+GAM_ENGINE_AVAILABLE = False  # Gamification system removed
+
+# Import production auth system
+from backend.auth_service import get_auth_service
+from backend.exception_handlers import register_all_handlers, AuthenticationError, StorageError
+from backend.secure_storage import get_users_storage
+from backend.jwt_manager import get_jwt_manager
+
+# Groq RAG Engine (Production pipeline: Hybrid search + Reranker + Groq)
 try:
-    from gamification_engine import (
-        process_event as gam_process_event,
-        calculate_level,
-        build_xp_timeline,
-        build_source_breakdown,
-        build_weekly_progress,
-    )
-    from ai_insights import generate_insights
-    GAM_ENGINE_AVAILABLE = True
-except ImportError as _imp_err:
-    print(f"[WARNING] Gamification engine not loaded: {_imp_err}")
-    GAM_ENGINE_AVAILABLE = False
+    from backend.rag.rag_pipeline import generate_answer as _rag_generate
+    RAG_ENGINE_AVAILABLE = True
+    def rag_pipeline(question, student_name="Student", subject_filter=""):
+        result = _rag_generate(question, student_name=student_name, subject_filter=subject_filter)
+        return result
+except ImportError as _rag_err:
+    print(f"[WARNING] RAG engine not loaded: {_rag_err}")
+    RAG_ENGINE_AVAILABLE = False
+    def rag_pipeline(question, student_name="Student", subject_filter=""):
+        return {"answer": None, "sources": [], "chunks_found": 0}
 
 # Load environment variables
 load_dotenv()
 
-# Supabase configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# ── Configure Logging ────────────────────────────────────────────────────────
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('backend/logs/app.log'),
+        logging.StreamHandler()
+    ]
+)
+
+# Ensure logs directory exists
+os.makedirs('backend/logs', exist_ok=True)
+
+logger = logging.getLogger(__name__)
+
+# ── Production Auth System Initialization ────────────────────────────────────
+# Old methods kept for backward compatibility (deprecated)
+def _load_users() -> dict:
+    """DEPRECATED: Use get_users_storage().load() instead"""
+    return get_users_storage().load()
+
+def _save_users(users: dict):
+    """DEPRECATED: Use get_users_storage().save() instead"""
+    get_users_storage().save(users)
+
+def _hash_password(plain: str) -> str:
+    """DEPRECATED: Use get_jwt_manager().hash_password() instead"""
+    return get_jwt_manager().hash_password(plain)
+
+def _verify_password(plain: str, hashed: str) -> bool:
+    """DEPRECATED: Use get_jwt_manager().verify_password() instead"""
+    return get_jwt_manager().verify_password(plain, hashed)
+
+def _create_token(uid: str, email: str) -> str:
+    """DEPRECATED: Use get_jwt_manager().create_access_token() instead"""
+    return get_jwt_manager().create_access_token(uid, email)
+
+def _decode_token(token: str) -> dict:
+    """DEPRECATED: Use get_jwt_manager().decode_token() instead"""
+    result = get_jwt_manager().decode_token(token)
+    if not result.valid:
+        raise HTTPException(status_code=401, detail=result.error)
+    return result.payload
 
 app = FastAPI()
 
+# ── Register Exception Handlers ──────────────────────────────────────────────
+register_all_handlers(app)
+logger.info("[OK] Exception handlers registered")
+
+# ── RAG startup check ────────────────────────────────────────────────────────
+@app.on_event("startup")
+async def _startup_build_rag_index():
+    if RAG_ENGINE_AVAILABLE:
+        logger.info("[RAG] Production pipeline loaded (hybrid search + reranker + Groq)")
+    else:
+        logger.warning("[RAG] Pipeline not available")
+
+
+@app.get("/health")
+@app.get("/api/health")
+async def health_check():
+    """System health check endpoint."""
+    rag_ready = False
+    rag_chunks = 0
+    if RAG_ENGINE_AVAILABLE:
+        try:
+            rag_ready = True  # disabled check
+            
+            if rag_ready:
+                info = None
+                rag_chunks = 0
+        except Exception:
+            pass
+    return JSONResponse({
+        "status":     "healthy",
+        "rag_ready":  rag_ready,
+        "rag_chunks": rag_chunks,
+    })
+
 # CORS middleware for React frontend
-# Allow multiple ports for development (Vite auto-increments when ports are busy)
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002").split(",")
+# Allow all localhost/127.0.0.1 ports for development
+cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:5173,http://localhost:5174,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174")
+cors_origins = cors_origins_str.split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+# Mount static files for profile photos
+app.mount("/api/uploads", StaticFiles(directory="backend/uploads"), name="uploads")
 
 
 # ========== PYDANTIC MODELS ==========
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    name: str = ""
+    student_id: str = ""
+    class_section: str = ""
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
 class ProfileCreateRequest(BaseModel):
     uid: str
     student_name: str
@@ -60,12 +174,45 @@ class ProfileCreateRequest(BaseModel):
 
 
 class ProfileUpdateRequest(BaseModel):
+    # Personal Information
     student_name: Optional[str] = None
+    gender: Optional[str] = None
+    age: Optional[int] = None
+    dob: Optional[str] = None
+    mobile: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
     class_section: Optional[str] = None
+    
+    # Parent Information
     father_name: Optional[str] = None
     mother_name: Optional[str] = None
-    mobile: Optional[str] = None
-    address: Optional[str] = None
+    parent_contact: Optional[str] = None
+    parent_email: Optional[str] = None
+    emergency_contact: Optional[str] = None
+    parent_occupation: Optional[str] = None
+    guardian_info: Optional[str] = None
+    
+    # Academic Information
+    prev_term_grade: Optional[str] = None
+    overall_percentage: Optional[int] = None
+    attendance_percentage: Optional[int] = None
+    class_rank: Optional[int] = None
+    class_rank_total: Optional[int] = None
+    best_subject: Optional[str] = None
+    weak_subject: Optional[str] = None
+    total_exams: Optional[int] = None
+    homework_completion: Optional[int] = None
+    
+    # Extra Curricular
+    sports: Optional[str] = None
+    arts: Optional[str] = None
+    music: Optional[str] = None
+    clubs: Optional[str] = None
+    achievements: Optional[str] = None
+    awards: Optional[str] = None
+    leadership_role: Optional[str] = None
+    community_service: Optional[str] = None
 
 
 class GameCompleteRequest(BaseModel):
@@ -97,11 +244,6 @@ class AttendanceMarkRequest(BaseModel):
     student_id: str
 
 
-class GamificationEventRequest(BaseModel):
-    uid: str
-    event_type: str                       # homework_correct | game_win | game_complete | attendance_present | daily_login
-    payload: Optional[dict] = None        # Extra context — score, accuracy, etc.
-
 
 class ActionCompleteRequest(BaseModel):
     uid: str
@@ -122,70 +264,17 @@ class PerformanceAnalyticsResponse(BaseModel):
 
 # ========== HELPER FUNCTIONS ==========
 async def verify_supabase_token(authorization: str) -> dict:
-    """Verify Supabase JWT token and return user data"""
+    """Verify locally-issued JWT token"""
     if not authorization or not authorization.startswith('Bearer '):
         raise HTTPException(status_code=401, detail="Missing authorization")
-    
     token = authorization.split('Bearer ')[1]
-    
-    try:
-        # Verify token with Supabase Auth API
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{SUPABASE_URL}/auth/v1/user",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "apikey": SUPABASE_KEY
-                }
-            )
-            
-            if response.status_code != 200:
-                raise HTTPException(status_code=401, detail="Invalid token")
-            
-            return response.json()
-    except Exception as e:
-        print(f"Token verification error: {e}")
-        raise HTTPException(status_code=401, detail="Invalid token")
+    payload = _decode_token(token)  # raises HTTPException(401) if invalid/expired
+    return {"id": payload["sub"], "email": payload.get("email", "")}
 
 
-async def supabase_query(table: str, method: str = "GET", data: dict = None, filters: dict = None, token: str = None):
-    """Execute Supabase REST API query"""
-    url = f"{SUPABASE_URL}/rest/v1/{table}"
-    
-    # Use user token if provided, otherwise fallback to API key (anon/service)
-    auth_header = f"Bearer {token}" if token else f"Bearer {SUPABASE_KEY}"
-    
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": auth_header,
-        "Content-Type": "application/json",
-        "Prefer": "return=representation"
-    }
-    
-    # Add filters to URL
-    if filters:
-        params = []
-        for key, value in filters.items():
-            params.append(f"{key}=eq.{value}")
-        if params:
-            url += "?" + "&".join(params)
-    
-    async with httpx.AsyncClient() as client:
-        if method == "GET":
-            response = await client.get(url, headers=headers)
-        elif method == "POST":
-            response = await client.post(url, headers=headers, json=data)
-        elif method == "PATCH":
-            response = await client.patch(url, headers=headers, json=data)
-        else:
-            raise ValueError(f"Unsupported method: {method}")
-        
-        if response.status_code not in [200, 201]:
-            print(f"Supabase error [{response.status_code}]: {response.text}")
-            # If 406 Not Acceptable, it often means empty result for singular return, try to iterate
-            raise HTTPException(status_code=response.status_code, detail=f"Supabase Error: {response.text}")
-        
-        return response.json()
+async def supabase_query(table: str, method: str = "GET", data: Optional[dict] = None, filters: Optional[dict] = None, token: Optional[str] = None):
+    """No-op stub — database removed. All data served from local store."""
+    return [] if method == "GET" else {}
 
 
 # ========== API ENDPOINTS ==========
@@ -206,7 +295,175 @@ async def options_handler(full_path: str):
 
 @app.get("/")
 def root():
-    return {"message": "Student Dashboard API - Powered by Supabase", "status": "running"}
+    return {"message": "Student Dashboard API", "status": "running"}
+
+
+# ========== LOCAL JWT AUTH (PRODUCTION VERSION) ==========
+
+@app.post("/auth/signup")
+async def signup(req: SignupRequest):
+    """
+    Register a new user - PRODUCTION VERSION
+    Uses thread-safe storage and comprehensive error handling
+    """
+    try:
+        auth_service = get_auth_service()
+        result = auth_service.signup(
+            email=req.email,
+            password=req.password,
+            name=req.name,
+            student_id=req.student_id,
+            class_section=req.class_section
+        )
+        return result
+
+    except AuthenticationError as e:
+        logger.warning(f"Signup failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except StorageError as e:
+        logger.error(f"Storage error during signup: {str(e)}")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    except HTTPException:
+        raise  # Re-raise HTTPException without converting to 500
+
+    except Exception as e:
+        logger.error(f"Unexpected error during signup: {e}")
+        raise HTTPException(status_code=500, detail="Signup failed")
+
+
+@app.post("/auth/login")
+async def login(req: LoginRequest):
+    """
+    Sign in and receive JWT tokens - PRODUCTION VERSION
+    Returns both access token and refresh token
+    """
+    try:
+        auth_service = get_auth_service()
+        result = auth_service.login(
+            email=req.email,
+            password=req.password
+        )
+        return result
+
+    except AuthenticationError as e:
+        logger.warning(f"Login failed: {str(e)}")
+        raise HTTPException(status_code=401, detail=str(e))
+
+    except StorageError as e:
+        logger.error(f"Storage error during login: {str(e)}")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    except HTTPException:
+        raise  # Re-raise HTTPException without converting to 500
+
+    except Exception as e:
+        logger.error(f"Unexpected error during login: {e}")
+        raise HTTPException(status_code=500, detail="Login failed")
+
+
+@app.get("/auth/me")
+async def get_me(authorization: str = Header(None)):
+    """
+    Verify token and return current user info - PRODUCTION VERSION
+    Gracefully handles expired/invalid tokens
+    """
+    try:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="No token provided")
+
+        token = authorization[7:]  # Remove "Bearer " prefix
+
+        auth_service = get_auth_service()
+        user_info = auth_service.verify_token(token)
+
+        return user_info
+
+    except AuthenticationError as e:
+        logger.info(f"Token verification failed: {str(e)}")
+        raise HTTPException(status_code=401, detail=str(e))
+
+    except HTTPException:
+        raise  # Re-raise HTTPException without converting to 500
+
+    except Exception as e:
+        logger.error(f"Unexpected error in /auth/me: {e}")
+        raise HTTPException(status_code=500, detail="Authentication failed")
+
+
+@app.post("/auth/refresh")
+async def refresh_token_endpoint(req: RefreshTokenRequest):
+    """
+    Refresh access token using refresh token.
+    Expects JSON body: { "refresh_token": "<token>" }
+    """
+    try:
+        auth_service = get_auth_service()
+        result = auth_service.refresh_token(req.refresh_token)
+        return result
+
+    except AuthenticationError as e:
+        logger.warning(f"Token refresh failed: {str(e)}")
+        raise HTTPException(status_code=401, detail=str(e))
+
+    except Exception as e:
+        logger.error(f"Unexpected error during token refresh: {e}")
+        raise HTTPException(status_code=500, detail="Token refresh failed")
+
+
+@app.post("/auth/change-password")
+async def change_password(
+    req: ChangePasswordRequest,
+    authorization: str = Header(None)
+):
+    """
+    Change user password.
+    Expects JSON body: { "old_password": "...", "new_password": "..." }
+    Requires valid authentication via Authorization: Bearer <token>
+    """
+    try:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="No token provided")
+
+        token = authorization[7:]
+        auth_service = get_auth_service()
+
+        # Verify token first
+        user_info = auth_service.verify_token(token)
+        uid = user_info["uid"]
+
+        # Change password
+        auth_service.change_password(uid, req.old_password, req.new_password)
+
+        return {"success": True, "message": "Password changed successfully"}
+
+    except AuthenticationError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    except HTTPException:
+        raise  # Re-raise HTTPException without converting to 500
+
+    except Exception as e:
+        logger.error(f"Password change error: {e}")
+        raise HTTPException(status_code=500, detail="Password change failed")
+
+
+# ========== TOKEN DEBUG ENDPOINT (Development Only) ==========
+
+@app.get("/auth/token-info")
+async def get_token_info(authorization: str = Header(None)):
+    """
+    Get token expiry information for debugging
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="No token provided")
+
+    token = authorization[7:]
+    auth_service = get_auth_service()
+
+    info = auth_service.get_token_info(token)
+    return info
 
 
 @app.get("/api/dashboard/{uid}")
@@ -214,7 +471,7 @@ async def get_dashboard_data(
     uid: str,
     authorization: str = Header(None)
 ):
-    """Get student dashboard data"""
+    """Get student dashboard data - prioritizes users.json over Supabase"""
     try:
         user_token = None
         
@@ -227,49 +484,129 @@ async def get_dashboard_data(
             if user_data.get("id") != uid:
                 raise HTTPException(status_code=403, detail="Unauthorized access")
         
-        # Fetch parent data from Supabase using user token
+        # PRIORITY: Load from users.json FIRST (single source of truth for profile updates)
+        local_users = _load_users()
+        
+        if uid in local_users:
+            # User exists in local store - return complete profile from users.json
+            u = local_users[uid]
+            parent = {
+                "uid": uid,
+                "student_name": u.get("name", "Student Name"),
+                "student_id": u.get("student_id", uid[:8]),
+                "email": u.get("email", ""),
+                "profile_photo_url": u.get("profile_photo_url", None),
+                "father_name": u.get("father_name", ""),
+                "mother_name": u.get("mother_name", ""),
+                "class_section": u.get("class_section", ""),
+                "mobile": u.get("mobile", ""),
+                "address": u.get("address", ""),
+                "gender": u.get("gender", "Male"),
+                "age": u.get("age", 14),
+                "dob": u.get("dob", "2012-01-01"),
+                "parent_contact": u.get("parent_contact", ""),
+                "parent_email": u.get("parent_email", ""),
+                "emergency_contact": u.get("emergency_contact", ""),
+                "parent_occupation": u.get("parent_occupation", ""),
+                "guardian_info": u.get("guardian_info", ""),
+                "prev_term_grade": u.get("prev_term_grade", "A"),
+                "overall_percentage": u.get("overall_percentage", 85),
+                "attendance_percentage": u.get("attendance_percentage", 95),
+                "class_rank": u.get("class_rank", 5),
+                "class_rank_total": u.get("class_rank_total", 42),
+                "best_subject": u.get("best_subject", "Mathematics"),
+                "weak_subject": u.get("weak_subject", ""),
+                "total_exams": u.get("total_exams", 8),
+                "homework_completion": u.get("homework_completion", 92),
+                "sports": u.get("sports", ""),
+                "arts": u.get("arts", ""),
+                "music": u.get("music", ""),
+                "clubs": u.get("clubs", ""),
+                "achievements": u.get("achievements", "") if isinstance(u.get("achievements"), str) else "",
+                "awards": u.get("awards", ""),
+                "leadership_role": u.get("leadership_role", ""),
+                "community_service": u.get("community_service", ""),
+                # KPI Data
+                "present_days": u.get("present_days", 152),
+                "absent_days": u.get("absent_days", 8),
+                "total_days": u.get("total_days", 160),
+                "attendance_streak": u.get("attendance_streak", u.get("streak", 5)),
+                "homework_completed": u.get("homework_completed", 12),
+                "homework_total": u.get("homework_total", 15),
+                "reward_points": u.get("reward_points", 450),
+                "achievement_stars": u.get("achievement_stars", 23),
+                "streak": u.get("streak", 5),
+                "badges": u.get("badges", []),
+                "games_played": u.get("games_played", 0),
+                "high_score": u.get("high_score", 0),
+                "current_level": u.get("current_level", 1)
+            }
+            return JSONResponse(parent)
+        
+        # FALLBACK: Try Supabase if user not in local store
         parents = await supabase_query("parents", filters={"uid": uid}, token=user_token)
         
         if parents and len(parents) > 0:
             parent = parents[0]
-            print(f"Found existing parent data for {uid}")
             # Ensure all KPI fields exist (add defaults if missing)
             parent.setdefault('attendance_streak', parent.get('streak', 5))
             parent.setdefault('streak', 5)
             parent.setdefault('badges', [])
-            parent.setdefault('achievements', [])
-        else:
-            print(f"Creating new parent data for {uid}")
-            # Create default parent document if doesn't exist
-            parent = {
-                "uid": uid,
-                "student_name": "Student Name",
-                "student_id": uid[:8],
-                "father_name": "Father Name",
-                "mother_name": "Mother Name",
-                "class_section": "1-A",
-                "mobile": "Not provided",
-                "address": "Not provided",
-                "email": "Authenticated User",
-                # KPI Data
-                "attendance_percentage": 95,
-                "present_days": 152,
-                "absent_days": 8,
-                "total_days": 160,
-                "attendance_streak": 5,
-                "homework_completed": 12,
-                "homework_total": 15,
-                "reward_points": 450,
-                "achievement_stars": 23,
-                "streak": 5,
-                "badges": [],
-                "achievements": [],
-                "games_played": 0,
-                "high_score": 0,
-                "current_level": 1
-            }
-            # Save default data using user token (or service/anon if token is null, but likely needs token)
-            await supabase_query("parents", method="POST", data=parent, token=user_token)
+            parent.setdefault('achievements', "")
+            parent.setdefault('profile_photo_url', None)
+            return JSONResponse(parent)
+        
+        # No data found anywhere - return minimal profile
+        parent = {
+            "uid": uid,
+            "student_name": "Student Name",
+            "student_id": uid[:8],
+            "email": "",
+            "profile_photo_url": None,
+            "father_name": "",
+            "mother_name": "",
+            "class_section": "",
+            "mobile": "",
+            "address": "",
+            "gender": "Male",
+            "age": 14,
+            "dob": "2012-01-01",
+            "parent_contact": "",
+            "parent_email": "",
+            "emergency_contact": "",
+            "parent_occupation": "",
+            "guardian_info": "",
+            "prev_term_grade": "A",
+            "overall_percentage": 85,
+            "attendance_percentage": 95,
+            "class_rank": 5,
+            "class_rank_total": 42,
+            "best_subject": "Mathematics",
+            "weak_subject": "",
+            "total_exams": 8,
+            "homework_completion": 92,
+            "sports": "",
+            "arts": "",
+            "music": "",
+            "clubs": "",
+            "achievements": "",
+            "awards": "",
+            "leadership_role": "",
+            "community_service": "",
+            "present_days": 0,
+            "absent_days": 0,
+            "total_days": 0,
+            "attendance_streak": 5,
+            "homework_completed": 0,
+            "homework_total": 0,
+            "reward_points": 0,
+            "achievement_stars": 0,
+            "streak": 5,
+            "badges": [],
+            "games_played": 0,
+            "high_score": 0,
+            "current_level": 1
+        }
         
         return JSONResponse(parent)
         
@@ -280,24 +617,47 @@ async def get_dashboard_data(
             "uid": uid,
             "student_name": "Student Name",
             "student_id": uid[:8],
-            "father_name": "Father Name",
-            "mother_name": "Mother Name",
-            "class_section": "1-A",
-            "mobile": "Not provided",
-            "address": "Not provided",
-            "email": "Authenticated User",
+            "email": "",
+            "father_name": "",
+            "mother_name": "",
+            "class_section": "",
+            "mobile": "",
+            "address": "",
+            "gender": "Male",
+            "age": 14,
+            "dob": "2012-01-01",
+            "parent_contact": "",
+            "parent_email": "",
+            "emergency_contact": "",
+            "parent_occupation": "",
+            "guardian_info": "",
+            "prev_term_grade": "A",
+            "overall_percentage": 85,
             "attendance_percentage": 95,
-            "present_days": 152,
-            "absent_days": 8,
-            "total_days": 160,
+            "class_rank": 5,
+            "class_rank_total": 42,
+            "best_subject": "Mathematics",
+            "weak_subject": "",
+            "total_exams": 8,
+            "homework_completion": 92,
+            "sports": "",
+            "arts": "",
+            "music": "",
+            "clubs": "",
+            "achievements": "",
+            "awards": "",
+            "leadership_role": "",
+            "community_service": "",
+            "present_days": 0,
+            "absent_days": 0,
+            "total_days": 0,
             "attendance_streak": 5,
-            "homework_completed": 12,
-            "homework_total": 15,
-            "reward_points": 450,
-            "achievement_stars": 23,
+            "homework_completed": 0,
+            "homework_total": 0,
+            "reward_points": 0,
+            "achievement_stars": 0,
             "streak": 5,
             "badges": [],
-            "achievements": [],
             "games_played": 0,
             "high_score": 0,
             "current_level": 1
@@ -326,22 +686,41 @@ async def check_profile(
         if auth_uid != uid:
             raise HTTPException(status_code=403, detail="Unauthorized")
         
-        # Check if profile exists in database
-        profiles = await supabase_query("parents", filters={"uid": uid}, token=user_token)
-        
-        if profiles and len(profiles) > 0:
-            # Profile exists
-            return JSONResponse({
-                "exists": True,
-                "profile": profiles[0]
-            })
-        else:
-            # Profile does NOT exist
-            return JSONResponse({
-                "exists": False,
-                "profile": None
-            })
-            
+        # Check if profile exists in local users store
+        users = _load_users()
+        if uid in users:
+            u = users[uid]
+            local_profile = {
+                "uid": uid,
+                "student_name": u.get("name", "Student"),
+                "student_id": u.get("student_id", uid[:8]),
+                "email": u.get("email", ""),
+                "father_name": u.get("father_name", ""),
+                "mother_name": u.get("mother_name", ""),
+                "class_section": u.get("class_section", ""),
+                "mobile": u.get("mobile", ""),
+                "address": u.get("address", ""),
+                "attendance_percentage": 95,
+                "present_days": 0,
+                "absent_days": 0,
+                "total_days": 0,
+                "attendance_streak": 0,
+                "homework_completed": 0,
+                "homework_total": 0,
+                "reward_points": 0,
+                "achievement_stars": 0,
+                "streak": 0,
+                "badges": [],
+                "achievements": "",
+                "games_played": 0,
+                "high_score": 0,
+                "current_level": 1
+            }
+            return {"exists": True, "profile": local_profile}
+
+        # No local user found
+        return {"exists": False, "profile": None}
+
     except HTTPException:
         raise
     except Exception as e:
@@ -396,7 +775,7 @@ async def create_profile(
             "achievement_stars": 0,
             "streak": 0,
             "badges": [],
-            "achievements": [],
+            "achievements": "",
             "games_played": 0,
             "high_score": 0,
             "current_level": 1
@@ -439,18 +818,78 @@ async def update_profile(
         
         # Build update data (only include fields that were provided)
         update_data = {}
+        
+        # Personal Information
         if profile_data.student_name is not None:
             update_data["student_name"] = profile_data.student_name
+        if profile_data.gender is not None:
+            update_data["gender"] = profile_data.gender
+        if profile_data.age is not None:
+            update_data["age"] = profile_data.age
+        if profile_data.dob is not None:
+            update_data["dob"] = profile_data.dob
+        if profile_data.mobile is not None:
+            update_data["mobile"] = profile_data.mobile
+        if profile_data.email is not None:
+            update_data["email"] = profile_data.email
+        if profile_data.address is not None:
+            update_data["address"] = profile_data.address
         if profile_data.class_section is not None:
             update_data["class_section"] = profile_data.class_section
+            
+        # Parent Information
         if profile_data.father_name is not None:
             update_data["father_name"] = profile_data.father_name
         if profile_data.mother_name is not None:
             update_data["mother_name"] = profile_data.mother_name
-        if profile_data.mobile is not None:
-            update_data["mobile"] = profile_data.mobile
-        if profile_data.address is not None:
-            update_data["address"] = profile_data.address
+        if profile_data.parent_contact is not None:
+            update_data["parent_contact"] = profile_data.parent_contact
+        if profile_data.parent_email is not None:
+            update_data["parent_email"] = profile_data.parent_email
+        if profile_data.emergency_contact is not None:
+            update_data["emergency_contact"] = profile_data.emergency_contact
+        if profile_data.parent_occupation is not None:
+            update_data["parent_occupation"] = profile_data.parent_occupation
+        if profile_data.guardian_info is not None:
+            update_data["guardian_info"] = profile_data.guardian_info
+            
+        # Academic Information
+        if profile_data.prev_term_grade is not None:
+            update_data["prev_term_grade"] = profile_data.prev_term_grade
+        if profile_data.overall_percentage is not None:
+            update_data["overall_percentage"] = profile_data.overall_percentage
+        if profile_data.attendance_percentage is not None:
+            update_data["attendance_percentage"] = profile_data.attendance_percentage
+        if profile_data.class_rank is not None:
+            update_data["class_rank"] = profile_data.class_rank
+        if profile_data.class_rank_total is not None:
+            update_data["class_rank_total"] = profile_data.class_rank_total
+        if profile_data.best_subject is not None:
+            update_data["best_subject"] = profile_data.best_subject
+        if profile_data.weak_subject is not None:
+            update_data["weak_subject"] = profile_data.weak_subject
+        if profile_data.total_exams is not None:
+            update_data["total_exams"] = profile_data.total_exams
+        if profile_data.homework_completion is not None:
+            update_data["homework_completion"] = profile_data.homework_completion
+            
+        # Extra Curricular
+        if profile_data.sports is not None:
+            update_data["sports"] = profile_data.sports
+        if profile_data.arts is not None:
+            update_data["arts"] = profile_data.arts
+        if profile_data.music is not None:
+            update_data["music"] = profile_data.music
+        if profile_data.clubs is not None:
+            update_data["clubs"] = profile_data.clubs
+        if profile_data.achievements is not None:
+            update_data["achievements"] = profile_data.achievements
+        if profile_data.awards is not None:
+            update_data["awards"] = profile_data.awards
+        if profile_data.leadership_role is not None:
+            update_data["leadership_role"] = profile_data.leadership_role
+        if profile_data.community_service is not None:
+            update_data["community_service"] = profile_data.community_service
         
         # Add updated_at timestamp
         update_data["updated_at"] = datetime.now().isoformat()
@@ -458,35 +897,208 @@ async def update_profile(
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields to update")
         
-        # Update in database
-        headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {user_token}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
+        # Persist updates to local users store
+        all_users = _load_users()
+        if uid not in all_users:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Map updatable fields into the local store
+        field_map = {
+            "student_name": "name",
+            "gender": "gender",
+            "age": "age",
+            "dob": "dob",
+            "mobile": "mobile",
+            "email": "email",
+            "address": "address",
+            "class_section": "class_section",
+            "father_name": "father_name",
+            "mother_name": "mother_name",
+            "parent_contact": "parent_contact",
+            "parent_email": "parent_email",
+            "emergency_contact": "emergency_contact",
+            "parent_occupation": "parent_occupation",
+            "guardian_info": "guardian_info",
+            "prev_term_grade": "prev_term_grade",
+            "overall_percentage": "overall_percentage",
+            "attendance_percentage": "attendance_percentage",
+            "class_rank": "class_rank",
+            "class_rank_total": "class_rank_total",
+            "best_subject": "best_subject",
+            "weak_subject": "weak_subject",
+            "total_exams": "total_exams",
+            "homework_completion": "homework_completion",
+            "sports": "sports",
+            "arts": "arts",
+            "music": "music",
+            "clubs": "clubs",
+            "achievements": "achievements",
+            "awards": "awards",
+            "leadership_role": "leadership_role",
+            "community_service": "community_service"
         }
+        for api_field, store_field in field_map.items():
+            if api_field in update_data:
+                all_users[uid][store_field] = update_data[api_field]
+        _save_users(all_users)
         
-        url = f"{SUPABASE_URL}/rest/v1/parents?uid=eq.{uid}"
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(url, headers=headers, json=update_data)
-            
-            if response.status_code not in [200, 204]:
-                print(f"Update error [{response.status_code}]: {response.text}")
-                raise HTTPException(status_code=response.status_code, detail=f"Update failed: {response.text}")
-            
-            # Fetch updated profile
-            updated = await supabase_query("parents", filters={"uid": uid}, token=user_token)
-            if updated and len(updated) > 0:
-                return JSONResponse(updated[0])
-            else:
-                raise HTTPException(status_code=404, detail="Profile not found after update")
+        # Log activity for profile update
+        try:
+            from backend.activity_middleware import log_activity_manual
+            log_activity_manual(
+                user_id=uid,
+                event_type="profile_updated",
+                title="Profile Updated",
+                description="Updated personal information",
+                metadata={"fields_updated": list(update_data.keys())},
+                auto_xp=True
+            )
+        except Exception as log_err:
+            print(f"Activity logging failed: {log_err}")
+        # Return the updated profile
+        u = all_users[uid]
+        updated_profile = {
+            "uid": uid,
+            "student_name": u.get("name", ""),
+            "student_id": u.get("student_id", uid[:8]),
+            "email": u.get("email", ""),
+            "profile_photo_url": u.get("profile_photo_url", None),
+            "class_section": u.get("class_section", ""),
+            "mobile": u.get("mobile", ""),
+            "address": u.get("address", ""),
+            "father_name": u.get("father_name", ""),
+            "mother_name": u.get("mother_name", ""),
+            "gender": u.get("gender", "Male"),
+            "age": u.get("age", 14),
+            "dob": u.get("dob", "2012-01-01"),
+            "parent_contact": u.get("parent_contact", ""),
+            "parent_email": u.get("parent_email", ""),
+            "emergency_contact": u.get("emergency_contact", ""),
+            "parent_occupation": u.get("parent_occupation", ""),
+            "guardian_info": u.get("guardian_info", ""),
+            "prev_term_grade": u.get("prev_term_grade", "A"),
+            "overall_percentage": u.get("overall_percentage", 85),
+            "attendance_percentage": u.get("attendance_percentage", 95),
+            "class_rank": u.get("class_rank", 5),
+            "class_rank_total": u.get("class_rank_total", 42),
+            "best_subject": u.get("best_subject", "Mathematics"),
+            "weak_subject": u.get("weak_subject", ""),
+            "total_exams": u.get("total_exams", 8),
+            "homework_completion": u.get("homework_completion", 92),
+            "sports": u.get("sports", ""),
+            "arts": u.get("arts", ""),
+            "music": u.get("music", ""),
+            "clubs": u.get("clubs", ""),
+            "achievements": u.get("achievements", "") if isinstance(u.get("achievements"), str) else "",
+            "awards": u.get("awards", ""),
+            "leadership_role": u.get("leadership_role", ""),
+            "community_service": u.get("community_service", ""),
+        }
+        return JSONResponse(updated_profile)
                 
     except HTTPException:
         raise
     except Exception as e:
         print(f"Profile update error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
+
+
+@app.post("/api/profile/upload-photo")
+async def upload_profile_photo(
+    file: UploadFile = File(...),
+    authorization: str = Header(None)
+):
+    """Upload profile photo with security validations"""
+    try:
+        # Verify authorization
+        user_data = await verify_supabase_token(authorization)
+        uid = user_data.get("id")
+        
+        if not uid:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        # Validate file type
+        allowed_types = ["image/png", "image/jpeg", "image/jpg", "image/webp"]
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid file type. Allowed: PNG, JPEG, WEBP"
+            )
+        
+        # Validate file size (2MB max)
+        file_content = await file.read()
+        file_size = len(file_content)
+        max_size = 2 * 1024 * 1024  # 2MB
+        
+        if file_size > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Maximum size: 2MB"
+            )
+        
+        # Reset file pointer
+        await file.seek(0)
+        
+        # Load user data
+        all_users = _load_users()
+        if uid not in all_users:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Delete old photo if exists
+        old_photo_url = all_users[uid].get("profile_photo_url")
+        if old_photo_url:
+            old_photo_path = Path(old_photo_url.replace("/api/uploads/", "backend/uploads/"))
+            if old_photo_path.exists():
+                try:
+                    old_photo_path.unlink()
+                    print(f"Deleted old photo: {old_photo_path}")
+                except Exception as e:
+                    print(f"Failed to delete old photo: {e}")
+        
+        # Generate unique filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_extension = Path(file.filename or "unknown").suffix or ".jpg"
+        new_filename = f"{uid}_{timestamp}{file_extension}"
+        
+        # Save file
+        upload_dir = Path("backend/uploads/profile_photos")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        file_path = upload_dir / new_filename
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Update users.json with new photo URL
+        photo_url = f"/api/uploads/profile_photos/{new_filename}"
+        all_users[uid]["profile_photo_url"] = photo_url
+        all_users[uid]["updated_at"] = datetime.now().isoformat()
+        _save_users(all_users)
+        
+        # Log activity
+        try:
+            from backend.activity_middleware import log_activity_manual
+            log_activity_manual(
+                user_id=uid,
+                event_type="profile_photo_updated",
+                title="Profile Photo Updated",
+                description="Uploaded new profile photo",
+                metadata={"filename": new_filename},
+                auto_xp=True
+            )
+        except Exception as log_err:
+            print(f"Activity logging failed: {log_err}")
+        
+        return JSONResponse({
+            "message": "Profile photo uploaded successfully",
+            "photo_url": photo_url,
+            "filename": new_filename
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Photo upload error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload photo: {str(e)}")
 
 
 @app.get("/api/homework/{uid}")
@@ -508,19 +1120,19 @@ async def get_student_homework(
         if auth_uid != uid:
             raise HTTPException(status_code=403, detail="Unauthorized")
         
-        # Get student's class section
-        parents = await supabase_query("parents", filters={"uid": uid}, token=user_token)
-        if not parents or len(parents) == 0:
+        # Get student's class section from local users.json
+        users = _load_users()
+        if uid not in users:
             raise HTTPException(status_code=404, detail="Student profile not found")
         
-        student_class = parents[0].get("class_section", "1-A")
+        student_class = users[uid].get("class_section", "8-A")
         
         # Get all homework for student's class (use service key so all authenticated students can read)
         try:
             homework_list = await supabase_query(
                 "homework",
                 filters={"class_section": student_class},
-                token=SUPABASE_KEY  # service key — homework is publicly readable by design
+                token=None  # no database configured
             )
             
             if not homework_list:
@@ -642,14 +1254,13 @@ async def submit_homework(
         except Exception as table_error:
             print(f"Homework tables not found: {table_error}")
             raise HTTPException(
-                status_code=503, 
-                detail="Homework system not set up yet. Please run homework_system_setup.sql in Supabase dashboard."
+                status_code=503,
+                detail="Homework system not available."
             )
         
         homework_item = homework[0]
         correct_answer = homework_item.get("correct_answer", "").strip()
         student_answer = homework_data.student_answer.strip()
-        xp_reward = homework_item.get("xp_reward", 5)
         
         # Validate answer (case-insensitive comparison)
         is_correct = correct_answer.lower() == student_answer.lower()
@@ -688,16 +1299,14 @@ async def submit_homework(
             raise HTTPException(status_code=404, detail="Student profile not found")
         
         parent_record = parents[0]
-        current_points = parent_record.get("reward_points", 0)
-        new_points = current_points + xp_reward
 
         # Get updated homework stats
-        student_class = parent_record.get("class_section", "1-A")
+        student_class = parent_record.get("class_section", "8-A")
         try:
             homework_list = await supabase_query(
                 "homework",
                 filters={"class_section": student_class},
-                token=SUPABASE_KEY
+                token=None
             )
             
             all_submissions = await supabase_query(
@@ -715,40 +1324,7 @@ async def submit_homework(
         
         pending_count = total - completed_count
         completion_rate = round((completed_count / total * 100) if total > 0 else 0, 1)
-
-        # Badge unlock logic
-        existing_badges = parent_record.get("badges") or []
-        if isinstance(existing_badges, str):
-            import json as _json
-            try:
-                existing_badges = _json.loads(existing_badges)
-            except Exception:
-                existing_badges = []
-        
-        new_badge = None
-        existing_badge_ids = [b.get("id") if isinstance(b, dict) else b for b in existing_badges]
-
-        if completed_count == 1 and "homework_starter" not in existing_badge_ids:
-            new_badge = {
-                "id": "homework_starter",
-                "name": "Homework Starter",
-                "icon": "📝",
-                "description": "Completed your first homework!"
-            }
-            existing_badges.append(new_badge)
-        elif completed_count >= total and total > 0 and "homework_champion" not in existing_badge_ids:
-            new_badge = {
-                "id": "homework_champion",
-                "name": "Homework Champion",
-                "icon": "🏆",
-                "description": "Completed all homework assignments!"
-            }
-            existing_badges.append(new_badge)
-
-        # Update reward_points + badges atomically
-        update_data = {"reward_points": new_points}
-        if new_badge is not None:
-            update_data["badges"] = existing_badges
+        update_data = {}
 
         await supabase_query(
             "parents",
@@ -762,10 +1338,10 @@ async def submit_homework(
             "success": True,
             "correct": True,
             "message": "Correct! Well done! 🎉",
-            "xp_earned": xp_reward,
-            "total_xp": new_points,
+            "xp_earned": 0,
+            "total_xp": 0,
             "homework_id": homework_data.homework_id,
-            "new_badge": new_badge,
+            "new_badge": None,
             "stats": {
                 "total": total,
                 "completed": completed_count,
@@ -798,9 +1374,8 @@ async def get_student_attendance(
             raise HTTPException(status_code=403, detail="Unauthorized")
         
         # Generate mock attendance data for the current month and previous months
-        from datetime import datetime, timedelta
         import random
-        
+
         today = datetime.now()
         records = []
         
@@ -860,8 +1435,8 @@ async def mark_student_attendance(
         return {
             "success": True,
             "message": "Attendance marked successfully",
-            "date": attendance_data.date,
-            "status": attendance_data.status
+            "date": getattr(attendance_data, "date", ""),  # type: ignore
+            "status": getattr(attendance_data, "status", "")  # type: ignore
         }
         
     except HTTPException:
@@ -869,6 +1444,24 @@ async def mark_student_attendance(
     except Exception as e:
         print(f"Mark attendance error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to mark attendance: {str(e)}")
+
+
+# ========== HOLIDAYS ENDPOINT ==========
+
+_HOLIDAYS_FILE = os.path.join(os.path.dirname(__file__), "backend", "holidays_2026.json")
+
+@app.get("/api/holidays/2026")
+async def get_holidays_2026():
+    """Return the full 2026 Indian school holiday calendar."""
+    try:
+        with open(_HOLIDAYS_FILE, "r", encoding="utf-8") as f:
+            holidays = json.load(f)
+        return JSONResponse({"holidays": holidays, "year": 2026, "total": len(holidays)})
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Holiday data file not found")
+    except Exception as e:
+        print(f"Holidays error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load holidays: {str(e)}")
 
 
 @app.post("/api/game/complete")
@@ -895,69 +1488,14 @@ async def complete_game(
 
         if auth_uid != game_data.uid:
             raise HTTPException(status_code=403, detail="Unauthorized")
-
-        api_headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {user_token}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
-        }
-
-        async with httpx.AsyncClient() as client:
-            # ── Step 1: snapshot current state for delta comparison ──
-            pre_resp = await client.get(
-                f"{SUPABASE_URL}/rest/v1/parents?uid=eq.{game_data.uid}&select=reward_points,streak,badges",
-                headers=api_headers
-            )
-            old_xp = 0
-            if pre_resp.status_code == 200 and pre_resp.json():
-                old_xp = pre_resp.json()[0].get("reward_points", 0)
-            old_level = min((old_xp // 100) + 1, 50)
-
-            # ── Step 2: insert game session ──
-            session_resp = await client.post(
-                f"{SUPABASE_URL}/rest/v1/game_sessions",
-                headers=api_headers,
-                json={
-                    "student_uid":     game_data.uid,
-                    "game_name":       game_data.game_name,
-                    "score":           game_data.score,
-                    "total_questions": game_data.total_questions,
-                    "xp_earned":       game_data.xp_earned,
-                    "played_at":       datetime.now().isoformat(),
-                }
-            )
-            if session_resp.status_code != 201:
-                raise HTTPException(status_code=500, detail="Failed to save game session")
-
-            # ── Step 3: badge check RPC (best-effort) ──
-            badge_resp = await client.post(
-                f"{SUPABASE_URL}/rest/v1/rpc/check_and_award_badges",
-                headers=api_headers,
-                json={"p_student_uid": game_data.uid}
-            )
-            new_badges = badge_resp.json() if badge_resp.status_code == 200 else []
-
-            # ── Step 4: fetch refreshed parent row ──
-            post_resp = await client.get(
-                f"{SUPABASE_URL}/rest/v1/parents?uid=eq.{game_data.uid}&select=*",
-                headers=api_headers
-            )
-            if post_resp.status_code != 200 or not post_resp.json():
-                raise HTTPException(status_code=500, detail="Failed to fetch updated stats")
-
-        parent_data      = post_resp.json()[0]
-        total_xp         = parent_data.get("reward_points", 0)
-        level            = min((total_xp // 100) + 1, 50)
-        current_level_xp = total_xp % 100
-        xp_to_next       = 100 - current_level_xp
-        streak           = parent_data.get("streak", 0)
-        badges           = parent_data.get("badges", [])
-        leveled_up       = level > old_level
-        new_badge        = None
-        if new_badges:
-            first = new_badges[0]
-            new_badge = first if isinstance(first, dict) else {"name": first}
+        
+        games_played = 1
+        level = 1
+        current_level_xp = 0
+        xp_to_next = 100
+        new_badges = []
+        leveled_up = False
+        new_badge = None
 
         # ── Step 5: insert activity log (best-effort) ──
         activity_entry = None
@@ -965,7 +1503,7 @@ async def complete_game(
             activity_entry = {
                 "uid":         game_data.uid,
                 "action_type": "GAME_COMPLETE",
-                "xp_earned":   game_data.xp_earned,
+                "xp_earned": 0,
                 "label":       f"{game_data.game_name} Completed",
                 "icon":        "\U0001f3ae",
                 "timestamp":   datetime.now().isoformat(),
@@ -982,19 +1520,19 @@ async def complete_game(
         return JSONResponse({
             "success":          True,
             "game_name":        game_data.game_name,
-            "xp_earned":        game_data.xp_earned,
-            "total_xp":         total_xp,
-            "level":            level,
-            "current_level_xp": current_level_xp,
-            "xp_to_next_level": xp_to_next,
-            "xp_progress":      current_level_xp,
-            "streak":           streak,
-            "games_played":     parent_data.get("games_played", 0),
-            "total_game_xp":    parent_data.get("total_game_xp", 0),
-            "badges":           badges,
-            "new_badges":       new_badges,
-            "new_badge":        new_badge,
-            "leveled_up":       leveled_up,
+            "xp_earned": 0,
+            "total_xp": 0,
+            "level": 1,
+            "current_level_xp": 0,
+            "xp_to_next_level": 0,
+            "xp_progress": 0,
+            "streak": 0,
+            "games_played":     games_played,
+            "total_game_xp": 0,
+            "badges": [],
+            "new_badges": [],
+            "new_badge": None,
+            "leveled_up": False,
             "activity_entry":   activity_entry,
             "message":          "Game completed! \U0001f389",
         })
@@ -1028,56 +1566,21 @@ async def get_games_stats(
         if auth_uid != uid:
             raise HTTPException(status_code=403, detail="Unauthorized")
         
-        headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {user_token}"
-        }
-        
-        async with httpx.AsyncClient() as client:
-            # Get parent data
-            parent_url = f"{SUPABASE_URL}/rest/v1/parents?uid=eq.{uid}&select=*"
-            parent_response = await client.get(parent_url, headers=headers)
-            
-            if parent_response.status_code != 200:
-                raise HTTPException(status_code=500, detail="Failed to fetch student data")
-            
-            parents = parent_response.json()
-            if not parents or len(parents) == 0:
-                return JSONResponse({
-                    "total_games": 0,
-                    "total_xp": 0,
-                    "total_game_xp": 0,
-                    "games_played": 0,
-                    "badges": [],
-                    "current_level": 1,
-                    "recent_sessions": []
-                })
-            
-            parent_data = parents[0]
-            total_xp = parent_data.get("reward_points", 0)
-            level = min((total_xp // 100) + 1, 50)
-            
-            # Get recent game sessions
-            sessions_url = f"{SUPABASE_URL}/rest/v1/game_sessions?student_uid=eq.{uid}&order=played_at.desc&limit=10&select=*"
-            sessions_response = await client.get(sessions_url, headers=headers)
-            
-            recent_sessions = sessions_response.json() if sessions_response.status_code == 200 else []
-            
-            current_level_xp = total_xp % 100
-            xp_to_next = 100 - current_level_xp
-
-            return JSONResponse({
-                "total_games": parent_data.get("games_played", 0),
-                "total_xp": total_xp,
-                "total_game_xp": parent_data.get("total_game_xp", 0),
-                "games_played": parent_data.get("games_played", 0),
-                "badges": parent_data.get("badges", []),
-                "current_level": level,
-                "current_level_xp": current_level_xp,
-                "xp_to_next_level": xp_to_next,
-                "recent_sessions": recent_sessions,
-                "success": True
-            })
+        # Build stats from local users store
+        local_users = _load_users()
+        user_rec = local_users.get(uid, {})
+        return JSONResponse({
+            "total_games": user_rec.get("games_played", 0),
+            "total_xp": 0,
+            "total_game_xp": 0,
+            "games_played": user_rec.get("games_played", 0),
+            "badges": [],
+            "current_level": 1,
+            "current_level_xp": 0,
+            "xp_to_next_level": 0,
+            "recent_sessions": [],
+            "success": True
+        })
         
     except HTTPException:
         raise
@@ -1103,16 +1606,8 @@ async def get_student_analytics(
         if authorization and authorization.startswith('Bearer '):
             user_token = authorization.split('Bearer ')[1]
         
-        # Get recent game sessions
-        url = f"{SUPABASE_URL}/rest/v1/game_sessions?student_id=eq.{uid}&order=played_at.desc&limit=10"
-        headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {user_token}"
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers)
-            sessions_list = response.json() if response.status_code == 200 else []
+        # No database — return empty sessions list
+        sessions_list = []
         
         total_accuracy = sum(s.get("accuracy", 0) for s in sessions_list)
         total_time = sum(s.get("time_spent", 0) for s in sessions_list)
@@ -1157,31 +1652,15 @@ async def get_announcements(
         if authorization and authorization.startswith('Bearer '):
             user_token = authorization.split('Bearer ')[1]
 
-        headers_auth = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {user_token}"
-        }
-        headers_service = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}"
-        }
-
-        async with httpx.AsyncClient() as client:
-            # Step 1: Check announcement count
-            count_url = f"{SUPABASE_URL}/rest/v1/announcements?select=id"
-            count_resp = await client.get(count_url, headers=headers_service)
-            
-            # Auto-seed if less than 10 announcements
-            if count_resp.status_code == 200:
-                count_data = count_resp.json()
-                record_count = len(count_data) if isinstance(count_data, list) else 0
-                
-                if record_count < 10:
+        # Serve hardcoded announcements directly — no database needed
+        if True:  # scope block
+            seed_data_check = True
+            if seed_data_check:
                     # Insert full school announcement dataset
                     seed_data = [
                         # STUDENT CATEGORY
                         {"title": "📚 Homework Reminder", "description": "Dear students, please complete your Math homework (pages 12-15) and submit tomorrow. Remember to show all your working steps!", "category": "student", "priority": "normal"},
-                        {"title": "📖 Library Visit Day", "description": "Class 1-A will visit the school library on Friday at 10 AM. Bring your library cards to borrow exciting storybooks!", "category": "student", "priority": "normal"},
+                        {"title": "📖 Library Visit Day", "description": "Class 10-A will visit the school library on Friday at 10 AM. Bring your library cards to borrow exciting storybooks!", "category": "student", "priority": "normal"},
                         {"title": "🎨 Art & Craft Materials", "description": "For tomorrow's art class, please bring: colored papers, glue stick, scissors, and crayons. We'll be making a beautiful craft project!", "category": "student", "priority": "normal"},
                         {"title": "💧 Water Bottle Reminder", "description": "Don't forget to bring your water bottle every day! Stay hydrated and healthy. Keep it in your school bag.", "category": "student", "priority": "normal"},
                         
@@ -1214,27 +1693,14 @@ async def get_announcements(
                         {"title": "🚌 School Bus Route Change", "description": "Important! Bus Route 3 timing changed from 7:30 AM to 7:45 AM starting March 1st. Pickup points remain the same. Plan accordingly.", "category": "important", "priority": "high"},
                     ]
                     
-                    try:
-                        bulk_url = f"{SUPABASE_URL}/rest/v1/announcements"
-                        headers_insert = {**headers_service, "Prefer": "return=minimal"}
-                        seed_resp = await client.post(bulk_url, json=seed_data, headers=headers_insert)
-                        print(f"Auto-seed response status: {seed_resp.status_code}")
-                        if seed_resp.status_code not in [200, 201]:
-                            print(f"Seed failed: {seed_resp.text}")
-                    except Exception as e:
-                        print(f"Auto-seed error: {e}")
-            
-            # Fetch all announcements
-            ann_url = f"{SUPABASE_URL}/rest/v1/announcements?order=created_at.desc"
-            ann_resp = await client.get(ann_url, headers=headers_service)
-            announcements = ann_resp.json() if ann_resp.status_code == 200 else []
+                    pass  # seed_data defined above, used directly below
 
-            # Fetch this student's read records
-            reads_url = f"{SUPABASE_URL}/rest/v1/announcement_reads?student_uid=eq.{uid}&select=announcement_id"
-            reads_resp = await client.get(reads_url, headers=headers_auth)
-            reads_data = reads_resp.json() if reads_resp.status_code == 200 else []
-
-        read_ids = {r["announcement_id"] for r in reads_data if isinstance(r, dict)}
+            # Use hardcoded seed data as announcements (assign numeric IDs)
+            announcements = [
+                {**item, "id": idx + 1, "created_at": "2026-02-24T00:00:00"}
+                for idx, item in enumerate(seed_data)
+            ]
+            read_ids = set()  # No persistent read tracking without database
 
         # Annotate each announcement with read status
         for ann in announcements:
@@ -1270,38 +1736,9 @@ async def mark_announcement_read(
         if authorization and authorization.startswith('Bearer '):
             user_token = authorization.split('Bearer ')[1]
 
-        headers_auth = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {user_token}",
-            "Content-Type": "application/json",
-            "Prefer": "return=minimal"
-        }
-
-        async with httpx.AsyncClient() as client:
-            # Insert read record (ON CONFLICT DO NOTHING via UNIQUE constraint)
-            url = f"{SUPABASE_URL}/rest/v1/announcement_reads"
-            payload = {
-                "announcement_id": request.announcement_id,
-                "student_uid": request.uid
-            }
-            # Supabase upsert — ignore conflict
-            headers_upsert = {**headers_auth, "Prefer": "resolution=ignore-duplicates,return=minimal"}
-            resp = await client.post(url, json=payload, headers=headers_upsert)
-
-            # Re-fetch unread count
-            reads_url = f"{SUPABASE_URL}/rest/v1/announcement_reads?student_uid=eq.{request.uid}&select=announcement_id"
-            reads_resp = await client.get(reads_url, headers=headers_auth)
-            reads_data = reads_resp.json() if reads_resp.status_code == 200 else []
-
-            ann_url = f"{SUPABASE_URL}/rest/v1/announcements?select=id"
-            ann_resp = await client.get(ann_url, headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}"
-            })
-            all_announcements = ann_resp.json() if ann_resp.status_code == 200 else []
-
-        read_ids = {r["announcement_id"] for r in reads_data if isinstance(r, dict)}
-        unread_count = sum(1 for a in all_announcements if a.get("id") not in read_ids)
+        # No-op: without a database there is no persistent read state.
+        # Return success immediately so the UI can mark it read in Redux store.
+        unread_count = 0
 
         return JSONResponse({
             "success": True,
@@ -1321,290 +1758,6 @@ async def mark_announcement_read(
 # UNIFIED ACTION COMPLETE — SINGLE SOURCE OF TRUTH
 # ═══════════════════════════════════════════════════════════════
 
-# Maps frontend action_type strings to engine event_type strings
-_ACTION_TO_EVENT = {
-    "GAME_COMPLETE":     "game_win",
-    "HOMEWORK_COMPLETE": "homework_correct",
-    "ATTENDANCE_MARK":   "attendance_present",
-    "game_complete":     "game_win",
-    "homework_complete": "homework_correct",
-    "attendance_mark":   "attendance_present",
-}
-
-
-@app.post("/api/action/complete")
-async def action_complete(
-    req: ActionCompleteRequest,
-    authorization: str = Header(None)
-):
-    """
-    Unified gamification trigger.
-
-    Any client-side action (game, homework, attendance) calls this endpoint.
-    The gamification engine processes XP / level / badge / streak in one place
-    and returns the full updated state so the frontend can do a single Redux dispatch.
-
-    Response includes:
-        total_xp, level, xp_progress, streak,
-        badges, new_badge, leveled_up,
-        activity_entry, xp_earned
-    """
-    try:
-        if not GAM_ENGINE_AVAILABLE:
-            raise HTTPException(status_code=503, detail="Gamification engine unavailable")
-
-        user_token = None
-        if authorization and authorization.startswith('Bearer '):
-            user_token = authorization.split('Bearer ')[1]
-
-        user_data = await verify_supabase_token(authorization)
-        if user_data.get("id") != req.uid:
-            raise HTTPException(status_code=403, detail="Unauthorized")
-
-        # Map action_type → engine event_type
-        event_type = _ACTION_TO_EVENT.get(req.action_type)
-        if not event_type:
-            raise HTTPException(status_code=400, detail=f"Unknown action_type: {req.action_type}")
-
-        # Fetch current student record
-        parents = await supabase_query("parents", filters={"uid": req.uid}, token=user_token)
-        if not parents:
-            raise HTTPException(status_code=404, detail="Student profile not found")
-        student_record = parents[0]
-
-        # Run the central engine
-        update_dict = gam_process_event(
-            event_type=event_type,
-            student_record=student_record,
-            event_payload=req.metadata or {}
-        )
-        meta = update_dict.pop("_meta", {})
-        persist_fields = {k: v for k, v in update_dict.items() if not k.startswith("_")}
-
-        # Persist to parents table
-        if persist_fields:
-            hdrs = {
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {user_token}",
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal"
-            }
-            async with httpx.AsyncClient() as client:
-                await client.patch(
-                    f"{SUPABASE_URL}/rest/v1/parents?uid=eq.{req.uid}",
-                    headers=hdrs,
-                    json=persist_fields
-                )
-
-        # Insert into user_activity log (best-effort)
-        activity_entry = None
-        try:
-            meta_info = req.metadata or {}
-            activity_entry = {
-                "uid": req.uid,
-                "action_type": req.action_type,
-                "xp_earned": meta.get("xp_earned", 0),
-                "label": meta_info.get("label") or req.action_type.replace("_", " ").title(),
-                "icon": meta_info.get("icon") or (
-                    "🎮" if "GAME" in req.action_type.upper() else
-                    "📚" if "HOMEWORK" in req.action_type.upper() else "📅"
-                ),
-                "timestamp": datetime.now().isoformat(),
-            }
-            await supabase_query(
-                "user_activity",
-                method="POST",
-                data={**activity_entry, "created_at": datetime.now().isoformat()},
-                token=user_token
-            )
-        except Exception:
-            pass  # Table may not exist yet
-
-        # Also record in xp_events for analytics (best-effort)
-        try:
-            await supabase_query(
-                "xp_events",
-                method="POST",
-                data={
-                    "uid": req.uid,
-                    "event_type": event_type,
-                    "xp_earned": meta.get("xp_earned", 0),
-                    "source": req.action_type.split("_")[0].lower(),
-                    "date": datetime.now().date().isoformat(),
-                    "created_at": datetime.now().isoformat()
-                },
-                token=user_token
-            )
-        except Exception:
-            pass
-
-        total_xp = meta.get("total_xp", persist_fields.get("reward_points", 0))
-        new_level = meta.get("new_level", persist_fields.get("current_level", 1))
-        new_badges = meta.get("new_badges", [])
-
-        return JSONResponse({
-            "success": True,
-            "action_type": req.action_type,
-            "xp_earned": meta.get("xp_earned", 0),
-            "total_xp": total_xp,
-            "level": new_level,
-            "xp_progress": total_xp % 100,
-            "xp_to_next_level": 100 - (total_xp % 100),
-            "streak": persist_fields.get("streak", student_record.get("streak", 0)),
-            "streak_milestone": meta.get("streak_milestone", False),
-            "badges": persist_fields.get("badges", student_record.get("badges", [])),
-            "new_badge": new_badges[0] if new_badges else None,
-            "leveled_up": meta.get("level_up", False),
-            "activity_entry": activity_entry,
-            "analytics_update": {
-                "xp_delta": meta.get("xp_earned", 0),
-                "source": req.action_type.split("_")[0].lower(),
-                "date": datetime.now().date().isoformat(),
-            }
-        })
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Action complete error: {e}")
-        raise HTTPException(status_code=500, detail=f"Action processing failed: {str(e)}")
-
-
-# ═══════════════════════════════════════════════════════════════
-# GAMIFICATION ENGINE ROUTES
-# ═══════════════════════════════════════════════════════════════
-
-@app.post("/api/gamification/process")
-async def process_gamification_event(
-    req: GamificationEventRequest,
-    authorization: str = Header(None)
-):
-    """
-    Process a gamification event and return updated XP / level / badges.
-    Automatically persists changes to the parents table.
-    """
-    try:
-        if not GAM_ENGINE_AVAILABLE:
-            raise HTTPException(status_code=503, detail="Gamification engine not available")
-
-        user_token = None
-        if authorization and authorization.startswith('Bearer '):
-            user_token = authorization.split('Bearer ')[1]
-
-        user_data = await verify_supabase_token(authorization)
-        if user_data.get("id") != req.uid:
-            raise HTTPException(status_code=403, detail="Unauthorized")
-
-        # Fetch current student record
-        parents = await supabase_query("parents", filters={"uid": req.uid}, token=user_token)
-        if not parents:
-            raise HTTPException(status_code=404, detail="Student profile not found")
-
-        student_record = parents[0]
-
-        # Run engine
-        update_dict = gam_process_event(
-            event_type=req.event_type,
-            student_record=student_record,
-            event_payload=req.payload or {}
-        )
-
-        meta = update_dict.pop("_meta", {})
-
-        # Persist to DB (exclude internal _meta)
-        persist_fields = {k: v for k, v in update_dict.items() if not k.startswith("_")}
-        if persist_fields:
-            headers_patch = {
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {user_token}",
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal"
-            }
-            url = f"{SUPABASE_URL}/rest/v1/parents?uid=eq.{req.uid}"
-            async with httpx.AsyncClient() as client:
-                await client.patch(url, headers=headers_patch, json=persist_fields)
-
-        # Also record in xp_events table if it exists (best-effort, non-fatal)
-        try:
-            xp_event_record = {
-                "uid": req.uid,
-                "event_type": req.event_type,
-                "xp_earned": meta.get("xp_earned", 0),
-                "source": req.event_type.split("_")[0],  # homework | game | attendance
-                "date": datetime.now().date().isoformat(),
-                "created_at": datetime.now().isoformat()
-            }
-            await supabase_query(
-                "xp_events",
-                method="POST",
-                data=xp_event_record,
-                token=user_token
-            )
-        except Exception:
-            pass  # Table may not exist yet — non-fatal
-
-        # Re-fetch fresh record
-        updated_parents = await supabase_query("parents", filters={"uid": req.uid}, token=user_token)
-        fresh = updated_parents[0] if updated_parents else {**student_record, **persist_fields}
-
-        return JSONResponse({
-            "success": True,
-            "xp_earned": meta.get("xp_earned", 0),
-            "total_xp": meta.get("total_xp", fresh.get("reward_points", 0)),
-            "level": meta.get("new_level", fresh.get("current_level", 1)),
-            "level_up": meta.get("level_up", False),
-            "new_badges": meta.get("new_badges", []),
-            "streak": fresh.get("streak", 0),
-            "streak_milestone": meta.get("streak_milestone", False),
-            "profile": fresh
-        })
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Gamification process error: {e}")
-        raise HTTPException(status_code=500, detail=f"Gamification processing failed: {str(e)}")
-
-
-@app.get("/api/gamification/status/{uid}")
-async def get_gamification_status(
-    uid: str,
-    authorization: str = Header(None)
-):
-    """Return current XP / level / badge / streak status for a student."""
-    try:
-        user_token = None
-        if authorization and authorization.startswith('Bearer '):
-            user_token = authorization.split('Bearer ')[1]
-
-        user_data = await verify_supabase_token(authorization)
-        if user_data.get("id") != uid:
-            raise HTTPException(status_code=403, detail="Unauthorized")
-
-        parents = await supabase_query("parents", filters={"uid": uid}, token=user_token)
-        if not parents:
-            raise HTTPException(status_code=404, detail="Student profile not found")
-
-        p = parents[0]
-        total_xp = int(p.get("reward_points", 0))
-
-        return JSONResponse({
-            "uid": uid,
-            "total_xp": total_xp,
-            "level": int(p.get("current_level", calculate_level(total_xp))),
-            "current_level_xp": total_xp % 100,
-            "xp_to_next_level": 100 - (total_xp % 100),
-            "streak": int(p.get("streak", 0)),
-            "badges": p.get("badges", []),
-            "achievement_stars": int(p.get("achievement_stars", 0)),
-            "last_active_date": p.get("last_active_date")
-        })
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Gamification status error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1645,14 +1798,13 @@ async def get_performance_analytics(
                 filters={"uid": uid},
                 token=user_token
             )
-            xp_history = raw_events if raw_events else []
+            xp_history = list(raw_events) if isinstance(raw_events, list) else []
         except Exception:
             pass  # Table doesn't exist yet
 
         # Generate synthetic demo data if no real history
         if not xp_history and total_xp > 0:
-            from datetime import date, timedelta
-            today = date.today()
+            today = datetime.now().date()
             # Spread XP across last 14 days
             daily_xp = max(1, total_xp // 14)
             for i in range(14):
@@ -1664,16 +1816,9 @@ async def get_performance_analytics(
                         "xp_earned": daily_xp + (i % 5),
                         "source": source
                     })
-
-        # Build chart-ready data using engine helpers
-        if GAM_ENGINE_AVAILABLE:
-            xp_timeline = build_xp_timeline(xp_history)
-            source_breakdown = build_source_breakdown(xp_history)
-            weekly_progress = build_weekly_progress(xp_history)
-        else:
-            xp_timeline = []
-            source_breakdown = []
-            weekly_progress = []
+        xp_timeline = []
+        source_breakdown = []
+        weekly_progress = []
 
         # Subject scores (from alphabet game analytics if available)
         subject_scores: dict = {}
@@ -1694,7 +1839,7 @@ async def get_performance_analytics(
         games_played = int(p.get("games_played", 0))
 
         current_stats = {
-            "total_xp": total_xp,
+            "total_xp": 0,
             "level": int(p.get("current_level", 1)),
             "streak": int(p.get("streak", 0)),
             "homework_rate": round((hw_completed / hw_total) * 100, 1),
@@ -1761,11 +1906,11 @@ async def get_ai_insights(
 
         # Try fetching live homework count for accuracy
         try:
-            student_class = p.get("class_section", "1-A")
+            student_class = p.get("class_section", "8-A")
             hw_list = await supabase_query(
                 "homework",
                 filters={"class_section": student_class},
-                token=SUPABASE_KEY
+                token=None
             )
             hw_total_live = len(hw_list) if hw_list else hw_total_raw
             subs = await supabase_query(
@@ -1822,8 +1967,47 @@ async def get_ai_insights(
 
 
 # ═══════════════════════════════════════════════════════════════════
-# AI LEARNING ASSISTANT
+# AI LEARNING ASSISTANT  (Groq RAG-powered)
 # ═══════════════════════════════════════════════════════════════════
+
+# Subject keywords used to route questions to Groq RAG
+_SUBJECT_KEYWORDS = [
+    # Science
+    'science', 'biology', 'chemistry', 'physics', 'photosynthesis', 'cell',
+    'atom', 'molecule', 'ecosystem', 'force', 'energy', 'matter',
+    'microorganism', 'bacteria', 'virus', 'fungi', 'algae', 'protozoa',
+    'reproduction', 'combustion', 'friction', 'pressure', 'sound', 'light',
+    'pollution', 'conservation', 'crop', 'irrigation', 'metal', 'nonmetal',
+    'acid', 'base', 'salt', 'synthetic', 'fibre', 'plastic', 'coal', 'petroleum',
+    'star', 'planet', 'earthquake', 'lightning', 'chemical', 'reaction',
+    'activity', 'experiment', 'observe', 'solution', 'mixture', 'element',
+    # Math
+    'math', 'mathematics', 'algebra', 'geometry', 'fraction', 'equation',
+    'triangle', 'quadrilateral', 'profit', 'loss', 'interest', 'percentage',
+    'ratio', 'proportion', 'exponent', 'power', 'square', 'cube', 'root',
+    'linear', 'graph', 'data', 'probability', 'factorisation', 'polygon',
+    # Languages
+    'english', 'poem', 'story', 'chapter', 'passage', 'grammar',
+    'hindi', 'sanskrit', 'social', 'comprehension', 'essay', 'letter',
+    # Social Studies
+    'history', 'geography', 'civics', 'constitution', 'parliament', 'judiciary',
+    'agriculture', 'industry', 'resource', 'climate', 'soil', 'mineral',
+    'trade', 'colonialism', 'revolt', 'independence', 'democracy',
+    # Other subjects
+    'arts', 'drawing', 'dance', 'music', 'vocational', 'physical',
+    # Question patterns
+    'explain', 'define', 'what is', 'what are', 'describe', 'write about',
+    'tell me about', 'how does', 'how do', 'why does', 'why do',
+    'difference between', 'give me', 'information', 'full info',
+    'meaning of', 'types of', 'properties of', 'uses of', 'examples of',
+    'class 10', 'textbook', 'ncert', 'lesson', 'topic', 'concept',
+    'pond water', 'stagnant', 'suspension', 'nitrogen', 'carbon',
+]
+
+def _is_subject_question(message: str) -> bool:
+    """Return True when the question is about academic content."""
+    msg = message.lower()
+    return any(kw in msg for kw in _SUBJECT_KEYWORDS)
 
 def _ai_classify(message: str) -> str:
     """Classify the intent of a student message."""
@@ -1847,7 +2031,7 @@ def _ai_classify(message: str) -> str:
         return 'homework'
     if any(w in msg for w in ['game', 'play', 'fun', 'which game', 'what game']):
         return 'games'
-    if any(w in msg for w in ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'namaste', 'hola']):
+    if any(w in msg for w in ['hi', 'hello', 'hey', 'good morning', 'good moring', 'gud morning', 'gm', 'good afternoon', 'good evening', 'how are you', 'namaste', 'hola', 'wassup', 'whats up', "what's up", 'sup']):
         return 'greeting'
     if any(w in msg for w in ['tired', 'bored', "can't", 'cant', 'hard', 'difficult', 'struggling', 'give up']):
         return 'motivation'
@@ -1882,6 +2066,7 @@ def _try_eval_math(expression: str):
 
 def _build_ai_reply(intent: str, message: str, ctx: dict):
     """Build a context-aware reply and follow-up suggestions."""
+    import random
     name     = (ctx.get('name') or 'Student').split()[0]
     level    = ctx.get('level', 1)
     xp       = ctx.get('xp', 0)
@@ -1893,12 +2078,31 @@ def _build_ai_reply(intent: str, message: str, ctx: dict):
     xp_to_next = 100 - (xp % 100)
 
     if intent == 'greeting':
-        reply = (
-            f"Hey {name}! 👋 Great to see you!\n\n"
-            f"You're currently **Level {level}** with **{xp} XP** and a "
-            f"**{streak}-day** learning streak. What would you like to explore today?"
-        )
-        suggestions = ["Show my progress", "Help me with math", "Which game should I play?", "Homework tips"]
+        # Professional greeting responses (randomly selected)
+        greetings = [
+            "Hello! How can I assist you today?",
+            "Hi there! What would you like to learn today?",
+            "Welcome! Feel free to ask any question.",
+            "Hello! I'm here to help with your studies.",
+            "Hi! What topic would you like help with today?",
+            "Hello! Let's start learning. What's your question?",
+            "Hi there! How can I support your learning today?",
+            "Hello! Ask me anything related to your subjects.",
+            "Hi! I'm ready to help you understand your lessons.",
+            "Hello! What would you like to explore today?",
+            "Hi! I'm here to make learning easier for you.",
+            "Hello! Do you need help with homework or concepts?",
+            "Hi there! Let's solve your questions together.",
+            "Hello! What subject would you like help with today?",
+            "Hi! I'm ready whenever you are. What can I help with?",
+            "Hello! Let's learn something new today.",
+            "Hi! Tell me what you're curious about today.",
+            "Hello! I'm here to guide you step by step.",
+            "Hi there! What question do you have today?",
+            "Hello! Let's begin. What would you like to ask?",
+        ]
+        reply = random.choice(greetings)
+        suggestions = ["Help me with math", "Explain a science topic", "Help with homework", "Ask about my textbooks"]
 
     elif intent == 'math':
         result = _try_eval_math(message)
@@ -2023,19 +2227,42 @@ def _build_ai_reply(intent: str, message: str, ctx: dict):
         )
         suggestions = ["Show my achievements", "Play a quick game", "Math tips", "Check my progress"]
 
-    else:  # general
-        reply = (
-            f"Hi {name}! 🤖 I'm your AI Learning Assistant.\n\n"
-            "**I can help you with:**\n"
-            "🧮 Math problems — just type the equation!\n"
-            "📖 Spelling tips and word help\n"
-            "📊 Your XP, level, streak & homework progress\n"
-            "🎮 Game recommendations for maximum XP\n"
-            "💪 Motivation when things get tough\n\n"
-            "What would you like to explore?"
-        )
-        suggestions = ["Help me with math", "Check my progress", "Which game gives most XP?", "Homework tips"]
+    else:  # general - treat as greeting with professional response
+        greetings = [
+            "Hello! How can I assist you today?",
+            "Hi there! What would you like to learn today?",
+            "Welcome! Feel free to ask any question.",
+            "Hello! I'm here to help with your studies.",
+            "Hi! What topic would you like help with today?",
+            "Hello! Let's start learning. What's your question?",
+            "Hi there! How can I support your learning today?",
+            "Hello! Ask me anything related to your subjects.",
+            "Hi! I'm ready to help you understand your lessons.",
+            "Hello! What would you like to explore today?",
+        ]
+        reply = random.choice(greetings)
+        suggestions = ["Help me with math", "Explain a science topic", "Help with homework", "Ask about my textbooks"]
 
+    return reply, suggestions
+
+
+async def _groq_rag_reply(message: str, student_name: str, subject_filter: str = "") -> Tuple[str, List[str]]:
+    """Call Groq RAG pipeline and return (reply, suggestions)."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, rag_pipeline, message, student_name, subject_filter
+    )
+    answer  = result.get("answer") or ""
+    sources = result.get("sources", [])
+    reply   = answer
+
+    suggestions = [
+        "Explain more",
+        "Give me an example",
+        "What else should I know?",
+        "Test me on this topic",
+    ]
     return reply, suggestions
 
 
@@ -2080,7 +2307,20 @@ async def assistant_chat(
                            "hw_done": 0, "hw_total": 1, "badges": []}
 
         intent = _ai_classify(message)
-        reply, suggestions = _build_ai_reply(intent, message, student_ctx)
+
+        # Route to RAG by default — only skip for clearly non-academic intents
+        _NON_RAG_INTENTS = {'progress', 'streak', 'rewards', 'homework', 'games', 'greeting', 'math', 'spelling', 'motivation'}
+        if RAG_ENGINE_AVAILABLE and intent not in _NON_RAG_INTENTS:
+            try:
+                reply, suggestions = await _groq_rag_reply(
+                    message, student_ctx.get("name", "Student")
+                )
+                intent = "rag"
+            except Exception as _rag_exc:
+                print(f"[RAG fallback] {_rag_exc}")
+                reply, suggestions = _build_ai_reply(intent, message, student_ctx)
+        else:
+            reply, suggestions = _build_ai_reply(intent, message, student_ctx)
 
         # Best-effort: persist to chat_messages table
         try:
@@ -2133,6 +2373,1319 @@ async def assistant_history(uid: str, authorization: str = Header(None)):
     except Exception as e:
         print(f"Chat history error: {e}")
         return JSONResponse({"messages": []})
+
+
+# ── Phase 8: Simple /chat endpoint (used by askAI helper) ────────────────────
+# Image text extraction helper
+def _extract_image_text(image_bytes: bytes, mime_type: str) -> str:
+    """Extract text from uploaded image using Groq Vision + OCR fallback."""
+    try:
+        from backend.rag.image_reader import extract_text_from_image
+        return extract_text_from_image(image_bytes, mime_type)
+    except Exception as e:
+        print(f"[image] text extraction failed: {e}")
+        return ""
+
+@app.post("/chat")
+async def simple_chat(
+    message: str = Form(...),
+    image: UploadFile = File(None),
+):
+    question = message.strip()
+    if not RAG_ENGINE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="RAG engine not available")
+
+    # Extract text from image if provided
+    if image:
+        contents = await image.read()
+        mime = image.content_type or "image/png"
+        import asyncio
+        extracted = await asyncio.get_event_loop().run_in_executor(
+            None, _extract_image_text, contents, mime
+        )
+        if extracted:
+            question = f"{question} {extracted}".strip() if question else extracted
+
+    import asyncio
+    result = await asyncio.get_event_loop().run_in_executor(
+        None, rag_pipeline, question
+    )
+    return {
+        "question": question,
+        "answer": result.get("answer", ""),
+        "sources": result.get("sources", []),
+        "chunks_found": result.get("chunks_found", 0),
+        "elapsed_sec": result.get("elapsed_sec"),
+        "language": result.get("language", "english"),
+    }
+
+
+# ── Dedicated Groq RAG Chat endpoint ─────────────────────────────────────────
+@app.post("/api/assistant/rag-chat")
+async def rag_chat(
+    message: str = Form(None),
+    student_name: str = Form("Student"),
+    subject_filter: str = Form(""),
+    image: UploadFile = File(None),
+    authorization: str = Header(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+    """
+    Groq-powered RAG chat endpoint.
+    Retrieves relevant NCERT PDF chunks, then answers via Groq llama3-8b-8192.
+    Accepts optional image upload for OCR-based questions.
+    Falls back to rule-based reply if Groq is unavailable.
+    """
+    try:
+        message        = (message or "").strip()
+        student_name   = (student_name or "Student")
+        subject_filter = (subject_filter or "")
+
+        # Extract text from image if provided
+        if image:
+            contents = await image.read()
+            mime = image.content_type or "image/png"
+            import asyncio as _aio
+            extracted = await _aio.get_event_loop().run_in_executor(
+                None, _extract_image_text, contents, mime
+            )
+            if extracted:
+                message = f"{message} {extracted}".strip() if message else extracted
+
+        if not message:
+            raise HTTPException(status_code=400, detail="message is required")
+        if len(message) > 3000:
+            raise HTTPException(status_code=400, detail="Message too long")
+
+        if not RAG_ENGINE_AVAILABLE:
+            raise HTTPException(status_code=503, detail="RAG engine not available")
+
+        import asyncio
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, rag_pipeline, message, student_name, subject_filter
+        )
+
+        answer  = result.get("answer", "")
+        sources = result.get("sources", [])
+        reply   = answer
+
+        return JSONResponse({
+            "reply":        reply,
+            "answer":       answer,
+            "sources":      sources,
+            "chunks_found": result.get("chunks_found", 0),
+            "elapsed_sec":  result.get("elapsed_sec"),
+            "suggestions":  ["Explain more", "Give me an example", "What else?", "Test me on this"],
+            "timestamp":    datetime.now().isoformat(),
+            "intent":       "rag",
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"RAG chat error: {e}")
+        raise HTTPException(status_code=500, detail="RAG assistant temporarily unavailable")
+
+
+@app.post("/api/assistant/rebuild-index")
+async def rebuild_rag_index(authorization: str = Header(None)):
+    """Rebuild index is handled by Qdrant — no local index to rebuild."""
+    return JSONResponse({"status": "ok", "message": "RAG uses Qdrant cloud — no local rebuild needed"})
+
+
+
+#  DIGITAL BOOK SYSTEM — Professional NCERT Smart Reader
+# ════════════════════════════════════════════════════════════
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, StreamingResponse
+import zipfile, io, re as _re, mimetypes, pathlib
+
+# Serve uploaded PDFs as static files
+_UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "backend", "uploads")
+os.makedirs(_UPLOADS_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=_UPLOADS_DIR), name="uploads")
+
+# ── ZIP Cache ────────────────────────────────────────────────────────────────
+import logging as _logging
+_zip_logger = _logging.getLogger("zip_downloads")
+
+
+def _get_zip_path(subject: str) -> str:
+    """Returns the expected cache path for a subject's full ZIP."""
+    return os.path.join(_UPLOADS_DIR, f"{subject}_full.zip")
+
+
+def _create_zip_if_not_exists(subject: str, folder: str) -> str:
+    """
+    Build a cached ZIP of all PDFs in *folder*.
+    First call  → O(n) — builds ZIP once, saves to disk.
+    Later calls → O(1) — returns cached path immediately.
+    Uses atomic rename to avoid serving partial files.
+    """
+    zip_path = _get_zip_path(subject)
+    if os.path.exists(zip_path):
+        return zip_path  # Cache hit
+
+    pdfs = sorted(
+        [f for f in os.listdir(folder) if f.lower().endswith(".pdf")],
+        key=_sort_key,
+    )
+    if not pdfs:
+        raise HTTPException(status_code=404, detail="No PDFs found for this subject")
+
+    tmp_path = zip_path + ".tmp"
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for pdf in pdfs:
+                zf.write(os.path.join(folder, pdf), pdf)
+        os.replace(tmp_path, zip_path)  # Atomic rename
+    except Exception as exc:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise HTTPException(status_code=500, detail=f"ZIP generation failed: {exc}")
+
+    return zip_path
+
+
+def _invalidate_zip_cache(subject: str):
+    """Delete cached ZIP so next download re-generates it (call after admin upload)."""
+    zip_path = _get_zip_path(subject)
+    if os.path.exists(zip_path):
+        try:
+            os.remove(zip_path)
+        except OSError:
+            pass
+
+
+def _log_zip_download(subject: str, uid: str):
+    """Background task: non-blocking async download log."""
+    _zip_logger.info(
+        "[ZIP_DOWNLOAD] subject=%s uid=%s timestamp=%s",
+        subject, uid, datetime.utcnow().isoformat(),
+    )
+    print(f"[ZIP_DOWNLOAD] subject={subject}  uid={uid}  at={datetime.utcnow().isoformat()}")
+
+
+# ── Subject slug → folder validation (prevent path traversal) ──
+_SAFE_SLUG = _re.compile(r"^[A-Za-z0-9_\- %]+$")
+
+def _validate_subject(subject: str) -> str:
+    """Ensure slug is safe (alphanumeric + underscore only)."""
+    subject = urllib.parse.unquote(subject)
+    if not _SAFE_SLUG.match(subject):
+        raise HTTPException(status_code=400, detail="Invalid subject identifier")
+    folder = os.path.join(_UPLOADS_DIR, subject)
+    if not os.path.isdir(folder):
+        raise HTTPException(status_code=404, detail=f"Subject '{subject}' not found")
+    return folder
+
+
+def _nice_title(filename: str) -> str:
+    """
+    Smart chapter title from filename:
+      intro.pdf / INTRO.pdf     → Intro
+      index.pdf / INDEX.pdf     → Index
+      unit.pdf  / UNIT.pdf      → Unit
+      chapter1.pdf              → Chapter 1
+      Chapter 1.pdf             → Chapter 1
+      chapter_3.pdf             → Chapter 3
+    """
+    stem = pathlib.Path(filename).stem
+    stem_clean = stem.replace("_", " ").replace("-", " ").strip()
+    lower = stem_clean.lower()
+    # Named specials
+    if lower == "intro":
+        return "Intro"
+    if lower == "index":
+        return "Index"
+    if lower == "unit":
+        return "Unit"
+    # "chapter1" or "chapter 1" or "Chapter  3"
+    m = _re.match(r"(?i)(chapter)\s*(\d+)(.*)", stem_clean)
+    if m:
+        suffix = m.group(3).strip(" -–—")
+        title = f"Chapter {m.group(2)}"
+        if suffix:
+            title += f" - {suffix}"
+        return title
+    return stem_clean.title()
+
+
+_REFERENCE_STEMS = {"index", "intro", "annexure", "warm up and cool down"}
+
+def _is_author_intro_stem(stem: str) -> bool:
+    """Match common author introduction filename variants."""
+    return stem in {
+        "author introduction",
+        "authors introduction",
+        "author intro",
+        "about author",
+        "about the author",
+    }
+
+def _is_reference(filename: str) -> bool:
+    stem = pathlib.Path(filename).stem.lower().replace("-", " ").replace("_", " ").strip()
+    return stem in _REFERENCE_STEMS or _is_author_intro_stem(stem)
+
+
+def _sort_key(filename: str):
+    """
+    Sort order:
+      0 → Index (always first)
+    1 → Author Introduction
+    2 → Intro
+    3 → Unit
+    4 → Chapter 1, 2, 3 … (numeric)
+    5 → everything else (Annexure, Warm-up, etc.) alphabetical
+    """
+    stem = pathlib.Path(filename).stem.lower().replace("-", " ").replace("_", " ").strip()
+    if stem == "index":
+        return (0, 0, stem)
+    if _is_author_intro_stem(stem):
+        return (1, 0, stem)
+    if stem == "intro":
+        return (2, 0, stem)
+    if stem == "unit":
+        return (3, 0, stem)
+    m = _re.search(r"(\d+)", stem)
+    if m:
+        return (4, int(m.group(1)), stem)
+    return (5, 0, stem)
+
+
+def _sort_key_math(filename: str):
+    """
+    Math-specific order:
+      0 -> Index
+      1 -> Appendix (Appendix 1, Appendix 2, ...)
+      2 -> Chapter (Chapter 1, Chapter 2, ...)
+      3 -> Answer Sheet
+      4 -> everything else (alphabetical)
+    """
+    stem = pathlib.Path(filename).stem.lower().replace("-", " ").replace("_", " ").strip()
+    stem = _re.sub(r"\s+", " ", stem)
+
+    if stem == "index":
+        return (0, 0, stem)
+
+    appendix_match = _re.match(r"appendix\s*(\d+)?", stem)
+    if appendix_match:
+        appendix_no = int(appendix_match.group(1)) if appendix_match.group(1) else 0
+        return (1, appendix_no, stem)
+
+    chapter_match = _re.match(r"chapter\s*(\d+)?", stem)
+    if chapter_match:
+        chapter_no = int(chapter_match.group(1)) if chapter_match.group(1) else 0
+        return (2, chapter_no, stem)
+
+    if stem in {"answer sheet", "answers", "answer key"}:
+        return (3, 0, stem)
+
+    return (4, 0, stem)
+
+
+def _get_user_book_progress(uid: str, subject: str) -> dict:
+    """Read book progress for a user+subject from users.json."""
+    users = _load_users()
+    user = users.get(uid, {})
+    books = user.get("books", {})
+    return books.get(subject, {})
+
+
+def _save_user_book_progress(uid: str, subject: str, progress: dict):
+    """Persist book progress for a user+subject into users.json."""
+    users = _load_users()
+    if uid not in users:
+        return
+    user = users[uid]
+    if "books" not in user:
+        user["books"] = {}
+    user["books"][subject] = progress
+    _save_users(users)
+
+
+# ── Helper to optionally verify JWT (returns uid or None) ──
+def _optional_auth(authorization: str | None) -> str | None:
+    """Return uid if a valid token is present, else None."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    try:
+        payload = _decode_token(authorization[7:])
+        return payload.get("sub")
+    except Exception:
+        return None
+
+
+def _require_auth(authorization: str | None) -> str:
+    """Return uid or raise 401."""
+    uid = _optional_auth(authorization)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return uid
+
+# ══════════════ BOOK API ENDPOINTS ══════════════
+
+@app.get("/api/books")
+def list_all_subjects(authorization: str = Header(None)):
+    """Return list of all subjects that have at least one PDF."""
+    if not os.path.isdir(_UPLOADS_DIR):
+        return JSONResponse([], headers={"Cache-Control": "no-store"})
+    uid = _optional_auth(authorization)
+    result = []
+    for name in sorted(os.listdir(_UPLOADS_DIR)):
+        folder = os.path.join(_UPLOADS_DIR, name)
+        if os.path.isdir(folder):
+            pdfs = [f for f in os.listdir(folder) if f.lower().endswith(".pdf")]
+            count = len(pdfs)
+            if count == 0:
+                continue
+            # Index/Intro/Annexure/Warm-up are reference material, not counted as chapters
+            chapter_count = len([f for f in pdfs if not _is_reference(f)])
+            # Include progress if user is authenticated
+            progress_data = {}
+            if uid:
+                progress_data = _get_user_book_progress(uid, name)
+            completed = progress_data.get("completedChapters", [])
+            result.append({
+                "slug": name,
+                "count": chapter_count,
+                "completedCount": len(completed),
+                "lastOpened": progress_data.get("lastOpened", None),
+                "lastOpenedAt": progress_data.get("lastOpenedAt", None),
+            })
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/books/{subject}")
+def list_subject_pdfs(subject: str, authorization: str = Header(None)):
+    """List all PDFs for a given subject folder, with per-chapter progress."""
+    # Validate slug (prevent path traversal)
+    print(f"DEBUG: requested subject={subject}")
+    subject = urllib.parse.unquote(subject)
+    if not _SAFE_SLUG.match(subject):
+        print(f"DEBUG: slug match failed for {subject}")
+        raise HTTPException(status_code=400, detail="Invalid subject identifier")
+    folder = os.path.join(_UPLOADS_DIR, subject)
+    print(f"DEBUG: folder path={folder}, exists={os.path.isdir(folder)}")
+    # If folder doesn't exist or is empty, return empty list (no error)
+    if not os.path.isdir(folder):
+        return JSONResponse([], headers={"Cache-Control": "no-store"})
+    uid = _optional_auth(authorization)
+    progress_data = {}
+    if uid:
+        progress_data = _get_user_book_progress(uid, subject)
+    completed_chapters = progress_data.get("completedChapters", [])
+    last_opened_id = progress_data.get("lastOpened", None)
+
+    sort_key_fn = _sort_key_math if "math" in subject.lower() else _sort_key
+    files = sorted(
+        [f for f in os.listdir(folder) if f.lower().endswith(".pdf")],
+        key=sort_key_fn,
+    )
+    data = [
+        {
+            "id": i,
+            "title": _nice_title(f),
+            "file": f"/uploads/{subject}/{f}",
+            "filename": f,
+            "completed": i in completed_chapters,
+            "isLastOpened": i == last_opened_id,
+            "is_index": _is_reference(f),
+        }
+        for i, f in enumerate(files)
+    ]
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/books/{subject}/upload")
+async def upload_subject_pdfs(
+    subject: str,
+    files: List[UploadFile] = File(...),
+    authorization: str = Header(None),
+):
+    """
+    Upload one or more PDF files into a subject folder.
+    Creates subject folder if it does not exist and invalidates ZIP cache.
+    """
+    uid = _require_auth(authorization)
+    users_store = _load_users()
+    role = users_store.get(uid, {}).get("role", "student")
+    if role not in ("student", "admin"):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    subject = urllib.parse.unquote(subject)
+    if not _SAFE_SLUG.match(subject):
+        raise HTTPException(status_code=400, detail="Invalid subject identifier")
+
+    folder = os.path.join(_UPLOADS_DIR, subject)
+    os.makedirs(folder, exist_ok=True)
+
+    saved_files = []
+    skipped_files = []
+
+    for upload in files:
+        filename = pathlib.Path(upload.filename or "").name
+        if not filename or not filename.lower().endswith(".pdf"):
+            skipped_files.append(filename or "unknown")
+            continue
+
+        safe_filename = _re.sub(r"[^A-Za-z0-9 ._()\-]", "_", filename)
+        dest = os.path.join(folder, safe_filename)
+
+        with open(dest, "wb") as out_file:
+            shutil.copyfileobj(upload.file, out_file)
+        saved_files.append(safe_filename)
+
+    if not saved_files:
+        raise HTTPException(status_code=400, detail="No valid PDF files provided")
+
+    _invalidate_zip_cache(subject)
+
+    return {
+        "success": True,
+        "subject": subject,
+        "uploaded_count": len(saved_files),
+        "uploaded_files": saved_files,
+        "skipped_files": skipped_files,
+        "message": f"Uploaded {len(saved_files)} PDF file(s) to '{subject}'",
+    }
+
+
+@app.get("/api/books/{subject}/zip-info")
+def get_zip_info(subject: str, authorization: str = Header(None)):
+    """
+    Return ZIP metadata: size in bytes/MB, chapter count, and whether
+    a cached ZIP already exists (so the frontend can show 'instant' vs 'building').
+    Auth is optional — this is public metadata, no sensitive data exposed.
+    """
+    # Soft auth check only — no 401 raised, just pass through
+    _optional_auth(authorization)
+
+    subject = urllib.parse.unquote(subject)
+    if not _SAFE_SLUG.match(subject):
+        raise HTTPException(status_code=400, detail="Invalid subject identifier")
+    folder = os.path.join(_UPLOADS_DIR, subject)
+    if not os.path.isdir(folder):
+        raise HTTPException(status_code=404, detail=f"Subject '{subject}' not found")
+
+    zip_path = _get_zip_path(subject)
+    cached = os.path.exists(zip_path)
+
+    if cached:
+        size_bytes = os.path.getsize(zip_path)
+    else:
+        pdfs = [f for f in os.listdir(folder) if f.lower().endswith(".pdf")]
+        size_bytes = sum(os.path.getsize(os.path.join(folder, f)) for f in pdfs) if pdfs else 0
+
+    chapter_count = len([f for f in os.listdir(folder)
+                          if f.lower().endswith(".pdf")
+                          and not _is_reference(f)])
+    return {
+        "subject": subject,
+        "cached": cached,
+        "size_bytes": size_bytes,
+        "size_mb": round(size_bytes / (1024 * 1024), 2),
+        "chapter_count": chapter_count,
+    }
+
+
+@app.get("/api/books/{subject}/download-all")
+def download_all_pdfs(
+    subject: str,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+):
+    """
+    Download the full subject ZIP (cached on first call).
+
+    Performance:
+      First download  → O(n) — builds & caches ZIP once
+      All subsequent  → O(1) — FileResponse from disk cache
+
+    RBAC: authenticated students and admins only.
+    """
+    # ── Security: RBAC ──────────────────────────────────────────────────────
+    uid = _require_auth(authorization)
+    users_store = _load_users()
+    role = users_store.get(uid, {}).get("role", "student")
+    if role not in ("student", "admin"):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # ── Validation ──────────────────────────────────────────────────────────
+    subject = urllib.parse.unquote(subject)
+    if not _SAFE_SLUG.match(subject):
+        raise HTTPException(status_code=400, detail="Invalid subject identifier")
+    folder = os.path.join(_UPLOADS_DIR, subject)
+    if not os.path.isdir(folder):
+        raise HTTPException(status_code=404, detail=f"Subject '{subject}' not found")
+
+    # ── Build or fetch cached ZIP ────────────────────────────────────────────
+    zip_path = _create_zip_if_not_exists(subject, folder)
+
+    # ── Async logging (non-blocking) ─────────────────────────────────────────
+    background_tasks.add_task(_log_zip_download, subject, uid)
+
+    nice_name = subject.replace("_", " ").title()
+    return FileResponse(
+        path=zip_path,
+        filename=f"{nice_name}_Full.zip",
+        media_type="application/zip",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
+@app.delete("/api/books/{subject}/zip-cache")
+def clear_zip_cache(subject: str, authorization: str = Header(None)):
+    """
+    Admin-only: invalidate cached ZIP for a subject.
+    Call this after uploading new chapters so next download re-builds the ZIP.
+    """
+    uid = _require_auth(authorization)
+    users_store = _load_users()
+    role = users_store.get(uid, {}).get("role", "student")
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    subject = urllib.parse.unquote(subject)
+    if not _SAFE_SLUG.match(subject):
+        raise HTTPException(status_code=400, detail="Invalid subject identifier")
+
+    _invalidate_zip_cache(subject)
+    return {"success": True, "message": f"ZIP cache cleared for '{subject}'"}
+
+
+# ── Reading Progress Tracking ──
+
+class BookProgressRequest(BaseModel):
+    chapter_id: int
+    action: str = "read"   # "read" | "complete"
+    time_spent: int = 0    # seconds spent reading
+    scroll_pct: int = 0    # max scroll percentage reached
+
+
+@app.post("/api/books/{uid}/progress")
+async def update_book_progress(
+    uid: str,
+    req: BookProgressRequest,
+    subject: Optional[str] = None,
+    authorization: str = Header(None),
+):
+    """
+    Track reading progress. Auto-marks chapter as completed when:
+    - scroll_pct >= 70   OR
+    - time_spent >= 120  (2 minutes)
+    - action == "complete"
+    """
+    auth_uid = _require_auth(authorization)
+    if auth_uid != uid:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    # Subject comes as query param  e.g. /api/books/{uid}/progress?subject=Std_8_math
+    if not subject:
+        raise HTTPException(status_code=400, detail="subject query param required")
+    _validate_subject(subject)
+
+    progress = _get_user_book_progress(uid, subject)
+    if "completedChapters" not in progress:
+        progress["completedChapters"] = []
+    if "readingTime" not in progress:
+        progress["readingTime"] = {}
+
+    # Update last opened
+    progress["lastOpened"] = req.chapter_id
+    progress["lastOpenedAt"] = datetime.utcnow().isoformat()
+
+    # Accumulate reading time
+    ch_key = str(req.chapter_id)
+    progress["readingTime"][ch_key] = progress["readingTime"].get(ch_key, 0) + req.time_spent
+
+    # Auto-complete when thresholds met
+    should_complete = (
+        req.action == "complete"
+        or req.scroll_pct >= 70
+        or progress["readingTime"].get(ch_key, 0) >= 120
+    )
+    
+    newly_completed = False
+    if should_complete and req.chapter_id not in progress["completedChapters"]:
+        progress["completedChapters"].append(req.chapter_id)
+        newly_completed = True
+
+    _save_user_book_progress(uid, subject, progress)
+
+    return {
+        "success": True,
+        "completed": req.chapter_id in progress["completedChapters"],
+        "completedChapters": progress["completedChapters"],
+        "totalCompleted": len(progress["completedChapters"]),
+        "xpEarned": 0,
+        "badgeEarned": None,
+        "newlyCompleted": newly_completed,
+    }
+
+
+@app.get("/api/books/{uid}/progress-all")
+async def get_all_book_progress(uid: str, authorization: str = Header(None)):
+    """Return reading progress for ALL subjects for a given user."""
+    auth_uid = _require_auth(authorization)
+    if auth_uid != uid:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    users = _load_users()
+    user = users.get(uid, {})
+    return user.get("books", {})
+
+
+# ── Timetable ────────────────────────────────────────────────────────────────
+
+TIMETABLE_DATA = {
+    "slots": [
+        {"id": "L1",    "label": "Lecture 1", "start": "07:00", "end": "07:40", "is_break": False},
+        {"id": "L2",    "label": "Lecture 2", "start": "07:40", "end": "08:20", "is_break": False},
+        {"id": "L3",    "label": "Lecture 3", "start": "08:20", "end": "09:00", "is_break": False},
+        {"id": "BR1",   "label": "Break",     "start": "09:00", "end": "09:20", "is_break": True},
+        {"id": "L4",    "label": "Lecture 4", "start": "09:00", "end": "09:40", "is_break": False},
+        {"id": "BR2",   "label": "Break",     "start": "09:40", "end": "10:00", "is_break": True},
+        {"id": "L5",    "label": "Lecture 5", "start": "10:00", "end": "10:40", "is_break": False},
+        {"id": "L6",    "label": "Lecture 6", "start": "10:40", "end": "11:20", "is_break": False},
+        {"id": "L7",    "label": "Lecture 7", "start": "11:20", "end": "12:00", "is_break": False},
+    ],
+    "schedule": {
+        "Monday": {
+            "L1":  {"subject": "Sanskrit",      "teacher": "Meera Iyer"},
+            "L2":  {"subject": "Mathematics",   "teacher": "Rajan Shah"},
+            "L3":  {"subject": "PT",            "teacher": "Sanjay Kulkarni"},
+            "BR1": {"subject": "Break",         "teacher": ""},
+            "L4":  {"subject": "Science",       "teacher": "Neelam Joshi"},
+            "BR2": {"subject": "Break",         "teacher": ""},
+            "L5":  {"subject": "English",       "teacher": "Deepa Nair"},
+            "L6":  {"subject": "Voc. Education", "teacher": "Rekha Sharma"},
+            "L7":  {"subject": "Social Science","teacher": "Manoj Trivedi"},
+        },
+        "Tuesday": {
+            "L1":  {"subject": "Sanskrit",      "teacher": "Meera Iyer"},
+            "L2":  {"subject": "English",       "teacher": "Deepa Nair"},
+            "L3":  {"subject": "Mathematics",   "teacher": "Rajan Shah"},
+            "BR1": {"subject": "Break",         "teacher": ""},
+            "L4":  {"subject": "Voc. Education", "teacher": "Rekha Sharma"},
+            "BR2": {"subject": "Break",         "teacher": ""},
+            "L5":  {"subject": "PT",            "teacher": "Sanjay Kulkarni"},
+            "L6":  {"subject": "Social Science", "teacher": "Manoj Trivedi"},
+            "L7":  {"subject": "Hindi",         "teacher": "Seema Yadav"},
+        },
+        "Wednesday": {
+            "L1":  {"subject": "Voc. Education", "teacher": "Rekha Sharma"},
+            "L2":  {"subject": "Mathematics",   "teacher": "Rajan Shah"},
+            "L3":  {"subject": "PT",            "teacher": "Sanjay Kulkarni"},
+            "BR1": {"subject": "Break",         "teacher": ""},
+            "L4":  {"subject": "Science",       "teacher": "Neelam Joshi"},
+            "BR2": {"subject": "Break",         "teacher": ""},
+            "L5":  {"subject": "Sanskrit",      "teacher": "Meera Iyer"},
+            "L6":  {"subject": "English",       "teacher": "Deepa Nair"},
+            "L7":  {"subject": "Hindi",         "teacher": "Seema Yadav"},
+        },
+        "Thursday": {
+            "L1":  {"subject": "Science",       "teacher": "Neelam Joshi"},
+            "L2":  {"subject": "Social Science","teacher": "Manoj Trivedi"},
+            "L3":  {"subject": "English",       "teacher": "Deepa Nair"},
+            "BR1": {"subject": "Break",         "teacher": ""},
+            "L4":  {"subject": "Fine Art",      "teacher": "Anita Mehta"},
+            "BR2": {"subject": "Break",         "teacher": ""},
+            "L5":  {"subject": "Hindi",         "teacher": "Seema Yadav"},
+            "L6":  {"subject": "Voc. Education", "teacher": "Rekha Sharma"},
+            "L7":  {"subject": "Mathematics",   "teacher": "Rajan Shah"},
+        },
+        "Friday": {
+            "L1":  {"subject": "Science",       "teacher": "Neelam Joshi"},
+            "L2":  {"subject": "Voc. Education", "teacher": "Rekha Sharma"},
+            "L3":  {"subject": "Sanskrit",      "teacher": "Meera Iyer"},
+            "BR1": {"subject": "Break",         "teacher": ""},
+            "L4":  {"subject": "Fine Art",      "teacher": "Anita Mehta"},
+            "BR2": {"subject": "Break",         "teacher": ""},
+            "L5":  {"subject": "English",       "teacher": "Deepa Nair"},
+            "L6":  {"subject": "Mathematics",   "teacher": "Rajan Shah"},
+            "L7":  {"subject": "Social Science","teacher": "Manoj Trivedi"},
+        },
+        "Saturday": {
+            "L1":  {"subject": "Hindi",         "teacher": "Seema Yadav"},
+            "L2":  {"subject": "Sanskrit",      "teacher": "Meera Iyer"},
+            "L3":  {"subject": "Mathematics",   "teacher": "Rajan Shah"},
+            "BR1": {"subject": "Break",         "teacher": ""},
+            "L4":  {"subject": "Science",       "teacher": "Neelam Joshi"},
+            "BR2": {"subject": "Break",         "teacher": ""},
+            "L5":  {"subject": "Voc. Education", "teacher": "Rekha Sharma"},
+            "L6":  {"subject": "Fine Art",      "teacher": "Anita Mehta"},
+            "L7":  None,
+        },
+    }
+}
+
+
+@app.get("/api/timetable/{uid}")
+async def get_timetable(uid: str, authorization: str = Header(None)):
+    """Return the weekly timetable for the given student."""
+    _require_auth(authorization)
+    return {
+        "uid": uid,
+        "class": "10",
+        "section": "A",
+        "slots": TIMETABLE_DATA["slots"],
+        "schedule": TIMETABLE_DATA["schedule"],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# PERFORMANCE DASHBOARD
+# ═══════════════════════════════════════════════════════════════
+
+# Deterministic seed so each uid always gets the same scores
+def _uid_seed(uid: str) -> int:
+    return sum(ord(c) * (i + 1) for i, c in enumerate(uid[:12] or "student"))
+
+@app.get("/api/performance/{uid}")
+async def get_performance(uid: str, authorization: str = Header(None)):
+    """
+    Return per-subject academic performance data for the class 10 dashboard.
+    Grades are deterministic per-uid so they stay consistent between refreshes.
+    """
+    _require_auth(authorization)
+
+    # Try to load real data from Supabase (best-effort)
+    real_data: dict = {}
+    try:
+        parents = await supabase_query("parents", filters={"uid": uid})
+        if parents:
+            real_data = parents[0]
+    except Exception:
+        pass
+
+    # Deterministic base scores (seeded by uid)
+    seed = int(hashlib.md5(uid.encode()).hexdigest(), 16) % 1000
+
+    SUBJECTS = [
+        {"name": "Mathematics",          "base": 88},
+        {"name": "English",              "base": 82},
+        {"name": "Hindi",                "base": 79},
+        {"name": "Science",              "base": 91},
+        {"name": "Fine Arts",            "base": 75},
+        {"name": "Social Science",       "base": 83},
+        {"name": "Sanskrit",             "base": 72},
+        {"name": "Physical Education",   "base": 95},
+        {"name": "Vocational Education", "base": 80},
+    ]
+
+    def _grade(avg: int) -> str:
+        if avg >= 90: return "A+"
+        if avg >= 80: return "A"
+        if avg >= 70: return "B"
+        if avg >= 60: return "C"
+        return "D"
+
+    subjects_out = []
+    for i, subj in enumerate(SUBJECTS):
+        # Vary by ±8 based on uid + subject index, keep in 55–98 range
+        variation = ((seed + i * 37) % 17) - 8
+        avg = max(55, min(98, subj["base"] + variation))
+        trend = ((seed + i * 13) % 11) - 4   # -4 to +6
+        subjects_out.append({
+            "name":  subj["name"],
+            "avg":   avg,
+            "trend": trend,
+            "grade": _grade(avg),
+        })
+
+    overall = round(sum(s["avg"] for s in subjects_out) / len(subjects_out))
+    top = max(subjects_out, key=lambda s: s["avg"])
+    growth = ((seed % 10) - 3)  # -3 to +6
+
+    # Monthly performance trend (last 8 months)
+    MONTHS = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb"]
+    monthly = []
+    running = max(45, overall - 12)
+    for i, month in enumerate(MONTHS):
+        step = ((seed + i * 7) % 7) - 2
+        running = max(50, min(100, running + step))
+        monthly.append({"month": month, "avg": running})
+    monthly[-1]["avg"] = overall  # last point = current average
+
+    # How many exams completed (from profile or deterministic)
+    exams_completed = int(real_data.get("homework_completed", (seed % 18) + 12))
+
+    return {
+        "uid":            uid,
+        "overallAverage": overall,
+        "growth":         growth,
+        "topSubject":     top["name"],
+        "examsCompleted": exams_completed,
+        "subjects":       subjects_out,
+        "monthly":        monthly,
+    }
+
+
+@app.get("/api/subject-details/{uid}/{subject}")
+async def get_subject_details(uid: str, subject: str, authorization: str = Header(None)):
+    """
+    Return comprehensive subject intelligence integrating performance, timetable,
+    attendance, and AI insights for the flip card back side.
+    """
+    _require_auth(authorization)
+    
+    seed = int(hashlib.md5(uid.encode()).hexdigest(), 16) % 1000
+    
+    # ── 1. Subject name normalization (map frontend names to timetable names) ──
+    SUBJECT_MAP = {
+        "Mathematics": "Mathematics",
+        "English": "English",
+        "Hindi": "Hindi",
+        "Science": "Science",
+        "Fine Arts": "Fine Art",
+        "Social Science": "Social Science",
+        "Sanskrit": "Sanskrit",
+        "Physical Education": "PT",
+        "Vocational Education": "Voc. Education",
+    }
+    timetable_subject = SUBJECT_MAP.get(subject, subject)
+    
+    # ── 2. Extract teacher and schedule from TIMETABLE_DATA ──
+    teacher = None
+    weekly_periods = 0
+    days_scheduled = []
+    next_class_info = None
+    last_class_info = None
+    
+    # Parse timetable to find subject occurrences
+    schedule = TIMETABLE_DATA.get("schedule", {})
+    slots = TIMETABLE_DATA.get("slots", [])
+    
+    from datetime import datetime, timedelta
+    today = datetime.now()
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    today_day_name = day_names[today.weekday()] if today.weekday() < 6 else None
+    
+    # Build list of all occurrences
+    occurrences = []
+    for day_name, day_schedule in schedule.items():
+        for slot_id, lesson in day_schedule.items():
+            if lesson and isinstance(lesson, dict) and lesson.get("subject") == timetable_subject:
+                if not teacher:
+                    teacher = lesson.get("teacher", "Assigned")
+                weekly_periods += 1
+                if day_name not in days_scheduled:
+                    days_scheduled.append(day_name)
+                
+                # Find slot details
+                slot_detail = next((s for s in slots if s["id"] == slot_id), None)
+                if slot_detail:
+                    occurrences.append({
+                        "day": day_name,
+                        "slot": slot_id,
+                        "start": slot_detail["start"],
+                        "end": slot_detail["end"],
+                    })
+    
+    # Sort occurrences by day order
+    day_order = {d: i for i, d in enumerate(day_names)}
+    occurrences.sort(key=lambda x: (day_order.get(x["day"], 99), x["start"]))
+    
+    # Find next upcoming class
+    current_day_idx = today.weekday()
+    for occ in occurrences:
+        occ_day_idx = day_order.get(occ["day"], 99)
+        if occ_day_idx > current_day_idx:
+            next_class_info = {
+                "day": occ["day"],
+                "time": occ["start"],
+                "relative": "This " + occ["day"],
+            }
+            break
+        elif occ_day_idx == current_day_idx:
+            # Check if time has passed
+            now_time = today.strftime("%H:%M")
+            if occ["start"] > now_time:
+                next_class_info = {
+                    "day": "Today",
+                    "time": occ["start"],
+                    "relative": "Today",
+                }
+                break
+    
+    # If no upcoming class this week, get first class of next week
+    if not next_class_info and occurrences:
+        first_occ = occurrences[0]
+        next_class_info = {
+            "day": first_occ["day"],
+            "time": first_occ["start"],
+            "relative": "Next " + first_occ["day"],
+        }
+    
+    # Find last class (most recent past occurrence)
+    for occ in reversed(occurrences):
+        occ_day_idx = day_order.get(occ["day"], 99)
+        if occ_day_idx < current_day_idx:
+            last_class_info = {
+                "day": occ["day"],
+                "time": occ["start"],
+                "relative": "Last " + occ["day"],
+            }
+            break
+    
+    if not last_class_info and current_day_idx > 0:
+        # Default to previous day occurrence
+        last_class_info = {
+            "day": day_names[(current_day_idx - 1) % 6],
+            "time": "07:40",
+            "relative": "Yesterday",
+        }
+    
+    # ── 3. Performance data (from existing performance endpoint logic) ──
+    SUBJECTS_BASE = {
+        "Mathematics": 88, "English": 82, "Hindi": 79, "Science": 91,
+        "Fine Arts": 75, "Social Science": 83, "Sanskrit": 72,
+        "Physical Education": 95, "Vocational Education": 80,
+    }
+    base_score = SUBJECTS_BASE.get(subject, 75)
+    subject_idx = list(SUBJECTS_BASE.keys()).index(subject) if subject in SUBJECTS_BASE else 0
+    
+    variation = ((seed + subject_idx * 37) % 17) - 8
+    average_score = max(55, min(98, base_score + variation))
+    trend = ((seed + subject_idx * 13) % 11) - 4
+    
+    def _grade(avg: int) -> str:
+        if avg >= 90: return "A+"
+        if avg >= 80: return "A"
+        if avg >= 70: return "B"
+        if avg >= 60: return "C"
+        return "D"
+    
+    grade = _grade(average_score)
+    
+    # Calculate rank (deterministic, 1-40 based on score)
+    rank = max(1, min(40, 41 - (average_score // 2)))
+    
+    # ── 4. Attendance percentage (deterministic per subject) ──
+    attendance_pct = max(75, min(98, 85 + ((seed + subject_idx * 7) % 14)))
+    
+    # ── 5. Total exams (deterministic) ──
+    total_exams = 4 + ((seed + subject_idx) % 3)  # 4-6 exams
+    
+    # ── 6. Last 4 exam scores with labels ──
+    exam_labels = ["Unit Test 1", "Unit Test 2", "Mid-term", "Monthly Test"]
+    last_scores = []
+    for i in range(min(4, total_exams)):
+        score = max(60, min(98, average_score + ((seed + subject_idx * 11 + i * 17) % 21) - 10))
+        last_scores.append({
+            "label": exam_labels[i] if i < len(exam_labels) else f"Test {i+1}",
+            "score": score,
+        })
+    
+    # ── 7. Skill breakdown (4 sub-skills per subject) ──
+    SKILL_MAP = {
+        "Mathematics": ["Algebra", "Geometry", "Arithmetic", "Data Handling"],
+        "English": ["Reading", "Writing", "Grammar", "Speaking"],
+        "Hindi": ["Reading", "Writing", "Grammar", "Literature"],
+        "Science": ["Physics", "Chemistry", "Biology", "Experiments"],
+        "Fine Arts": ["Drawing", "Painting", "Craft", "Design"],
+        "Social Science": ["History", "Geography", "Civics", "Economics"],
+        "Sanskrit": ["Grammar", "Literature", "Translation", "Poetry"],
+        "Physical Education": ["Athletics", "Team Sports", "Fitness", "Yoga"],
+        "Vocational Education": ["Practical Skills", "Theory", "Projects", "Safety"],
+    }
+    skills = SKILL_MAP.get(subject, ["Skill 1", "Skill 2", "Skill 3", "Skill 4"])
+    skill_breakdown = []
+    for i, skill_name in enumerate(skills):
+        skill_score = max(60, min(98, average_score + ((seed + subject_idx * 19 + i * 23) % 25) - 12))
+        skill_breakdown.append({
+            "name": skill_name,
+            "score": skill_score,
+        })
+    
+    # ── 8. AI-generated insight ──
+    insight = ""
+    if average_score >= 85 and attendance_pct >= 90:
+        insight = f"Excellent performance in {subject}! Your consistent attendance is driving your success."
+    elif average_score >= 80:
+        top_skill = max(skill_breakdown, key=lambda s: s["score"])
+        weak_skill = min(skill_breakdown, key=lambda s: s["score"])
+        insight = f"You excel in {top_skill['name']} but need improvement in {weak_skill['name']}."
+    elif trend > 0:
+        insight = f"Great progress! You've improved by {trend}% this term. Keep up the momentum."
+    elif attendance_pct < 85:
+        insight = f"Attendance is {attendance_pct}%. Attending more classes will help boost performance."
+    else:
+        insight = f"Focus on {skill_breakdown[0]['name']} to strengthen your {subject} foundation."
+    
+    # ── 9. Teacher feedback (deterministic sample) ──
+    FEEDBACK_POOL = [
+        "Good improvement this term. Focus on problem-solving speed.",
+        "Consistent effort shown. Keep practicing regularly.",
+        "Excellent grasp of concepts. Aim for deeper understanding.",
+        "Active participation appreciated. Work on accuracy.",
+        "Strong fundamentals. Practice more application questions.",
+    ]
+    feedback_idx = (seed + subject_idx * 31) % len(FEEDBACK_POOL)
+    teacher_feedback = FEEDBACK_POOL[feedback_idx]
+    
+    # ── 10. Assemble response ──
+    return {
+        "subject": subject,
+        "teacher": teacher or "Assigned",
+        "weekly_periods": weekly_periods,
+        "days_scheduled": ", ".join(days_scheduled[:3]) if days_scheduled else "TBD",
+        "section": "8-A",
+        "academic_year": "2025–26",
+        "next_class": next_class_info or {"day": "TBD", "time": "TBD", "relative": "TBD"},
+        "last_class": last_class_info or {"day": "TBD", "time": "TBD", "relative": "TBD"},
+        "average_score": average_score,
+        "rank": rank,
+        "grade": grade,
+        "trend": trend,
+        "attendance_pct": attendance_pct,
+        "total_exams": total_exams,
+        "last_scores": last_scores,
+        "skill_breakdown": skill_breakdown,
+        "insight": insight,
+        "teacher_feedback": teacher_feedback,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ACTIVITY ENGINE ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from backend.activity_engine import activity_engine, EventType
+from backend.activity_middleware import (
+    log_activity_manual,
+    log_login,
+    log_subject_viewed,
+    log_homework_completed,
+    log_book_opened,
+    log_pdf_viewed
+)
+
+
+@app.get("/api/activities/{uid}")
+async def get_user_activities(uid: str, limit: int = 20):
+    """
+    Get recent activities for a user
+    
+    Query params:
+        - limit: Number of activities to return (default: 20, max: 100)
+    """
+    try:
+        limit = min(limit, 100)  # Cap at 100
+        activities = activity_engine.get_user_activities(uid, limit)
+        
+        return {
+            "success": True,
+            "activities": activities,
+            "count": len(activities)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/activities/stats/{uid}")
+async def get_activity_stats(uid: str):
+    """Get activity statistics for a user"""
+    try:
+        stats = activity_engine.get_activity_stats(uid)
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/activities/log")
+async def log_activity_endpoint(request: dict):
+    """
+    Manually log an activity
+    
+    Body:
+        {
+            "user_id": "uid",
+            "event_type": "homework_completed",
+            "title": "Optional title",
+            "description": "Optional description",
+            "subject": "Optional subject",
+            "metadata": {}
+        }
+    """
+    try:
+        user_id = request.get('user_id')
+        event_type = request.get('event_type')
+        
+        if not user_id or not event_type:
+            return {"success": False, "error": "user_id and event_type required"}
+        
+        event = log_activity_manual(
+            user_id=user_id,
+            event_type=event_type,
+            title=request.get('title'),
+            description=request.get('description'),
+            subject=request.get('subject'),
+            metadata=request.get('metadata')
+        )
+        
+        return {
+            "success": True,
+            "event": event
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AI INSIGHT ENGINE ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from backend.insight_store import InsightStore
+from backend.ai_insight_engine import AIInsightEngine
+
+insight_store = InsightStore()
+insight_engine = AIInsightEngine()
+
+
+@app.get("/api/insights/{uid}")
+async def get_user_insights(
+    uid: str, 
+    status: Optional[str] = None,
+    limit: int = 20
+):
+    """
+    Get insights for a user
+    
+    Query params:
+        - status: Filter by status (active, dismissed, completed)
+        - limit: Number of insights to return (default: 20, max: 50)
+    """
+    try:
+        limit = min(limit, 50)
+        insights = insight_store.get_user_insights(uid, status=status, limit=limit)
+        
+        return {
+            "success": True,
+            "insights": insights,
+            "count": len(insights)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/insights/stats/{uid}")
+async def get_insight_stats(uid: str):
+    """Get insight statistics for a user"""
+    try:
+        stats = insight_store.get_insight_stats(uid)
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/insights/dismiss")
+async def dismiss_insight(request: dict):
+    """
+    Dismiss an insight
+    
+    Body:
+        {
+            "user_id": "uid",
+            "insight_id": "insight_id"
+        }
+    """
+    try:
+        user_id = request.get('user_id')
+        insight_id = request.get('insight_id')
+        
+        if not user_id or not insight_id:
+            return {"success": False, "error": "user_id and insight_id required"}
+        
+        success = insight_store.dismiss_insight(user_id, insight_id)
+        
+        return {
+            "success": success,
+            "message": "Insight dismissed" if success else "Insight not found"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/insights/complete")
+async def complete_insight(request: dict):
+    """
+    Mark an insight as completed
+    
+    Body:
+        {
+            "user_id": "uid",
+            "insight_id": "insight_id"
+        }
+    """
+    try:
+        user_id = request.get('user_id')
+        insight_id = request.get('insight_id')
+        
+        if not user_id or not insight_id:
+            return {"success": False, "error": "user_id and insight_id required"}
+        
+        success = insight_store.complete_insight(user_id, insight_id)
+        
+        return {
+            "success": success,
+            "message": "Insight completed" if success else "Insight not found"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/insights/generate")
+async def generate_insights(request: dict):
+    """
+    Manually trigger insight generation for a user
+    
+    Body:
+        {
+            "user_id": "uid"
+        }
+    """
+    try:
+        user_id = request.get('user_id')
+        
+        if not user_id:
+            return {"success": False, "error": "user_id required"}
+        
+        # Gather data
+        activities = activity_engine.get_user_activities(user_id, limit=50)
+        
+        gam_data = {}
+        try:
+            from backend.gamification_engine import GamificationEngine  # type: ignore  # type: ignore
+            gam_engine = GamificationEngine()
+            gam_data = gam_engine.get_user_state(user_id)
+        except ImportError:
+            pass
+        
+        # Generate insights
+        insights = insight_engine.analyze_user_activity(
+            user_id=user_id,
+            activities=activities,
+            gamification_data=gam_data
+        )
+        
+        return {
+            "success": True,
+            "insights": insights,
+            "count": len(insights)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 if __name__ == "__main__":

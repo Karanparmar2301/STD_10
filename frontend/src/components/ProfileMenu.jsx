@@ -4,7 +4,7 @@ import { useDispatch } from 'react-redux';
 import { logoutUser } from '../store/authSlice';
 import './ProfileMenu.css';
 
-const ProfileMenu = ({ studentName, studentClass, onEditProfile }) => {
+const ProfileMenu = ({ studentName, studentClass, profilePhotoUrl, onEditProfile }) => {
     const [isOpen, setIsOpen] = useState(false);
     const menuRef = useRef(null);
     const navigate = useNavigate();
@@ -55,13 +55,6 @@ const ProfileMenu = ({ studentName, studentClass, onEditProfile }) => {
         navigate('/profile');
     };
 
-    const handleEditProfile = () => {
-        setIsOpen(false);
-        if (onEditProfile) {
-            onEditProfile();
-        }
-    };
-
     const handleLogout = async () => {
         setIsOpen(false);
         // Clear auth token from localStorage
@@ -85,7 +78,15 @@ const ProfileMenu = ({ studentName, studentClass, onEditProfile }) => {
                 type="button"
             >
                 <div className="profile-avatar">
-                    {getInitials(studentName)}
+                    {profilePhotoUrl ? (
+                        <img 
+                            src={`http://127.0.0.1:8000${profilePhotoUrl}`}
+                            alt={studentName}
+                            className="profile-avatar-img"
+                        />
+                    ) : (
+                        getInitials(studentName)
+                    )}
                 </div>
                 <div className="profile-info">
                     <div className="profile-name">{studentName}</div>
@@ -137,31 +138,6 @@ const ProfileMenu = ({ studentName, studentClass, onEditProfile }) => {
                             />
                         </svg>
                         <span>Profile</span>
-                    </button>
-
-                    {/* Edit Profile Option */}
-                    <button
-                        className="dropdown-item"
-                        onClick={handleEditProfile}
-                        role="menuitem"
-                        type="button"
-                    >
-                        <svg
-                            className="dropdown-icon"
-                            width="20"
-                            height="20"
-                            viewBox="0 0 20 20"
-                            fill="none"
-                        >
-                            <path
-                                d="M14.166 2.5C14.3849 2.28113 14.6447 2.10752 14.9307 1.98906C15.2167 1.87061 15.5232 1.80969 15.8327 1.80969C16.1422 1.80969 16.4487 1.87061 16.7347 1.98906C17.0206 2.10752 17.2805 2.28113 17.4993 2.5C17.7182 2.71887 17.8918 2.97871 18.0103 3.26468C18.1287 3.55064 18.1897 3.85714 18.1897 4.16667C18.1897 4.47619 18.1287 4.78269 18.0103 5.06865C17.8918 5.35462 17.7182 5.61446 17.4993 5.83333L6.24935 17.0833L1.66602 18.3333L2.91602 13.75L14.166 2.5Z"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            />
-                        </svg>
-                        <span>Edit Profile</span>
                     </button>
 
                     {/* Divider */}

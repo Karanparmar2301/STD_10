@@ -247,7 +247,7 @@ def generate_insights(student_data: dict[str, Any]) -> dict[str, Any]:
         "generated_at":     str (ISO),
     }
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     total_xp = _safe_int(student_data.get("reward_points", 0))
     streak = _safe_int(student_data.get("streak", 0))
@@ -327,5 +327,5 @@ def generate_insights(student_data: dict[str, Any]) -> dict[str, Any]:
         "score": score,
         "trend": trend,
         "badge_hint": badge_hint,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
     }

@@ -2,12 +2,12 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { checkSession } from './store/authSlice';
-import { ThemeProvider } from './store/ThemeContext';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
-import VerifyEmail from './pages/VerifyEmail';
 import Dashboard from './pages/Dashboard';
 import ProfilePage from './pages/ProfilePage';
+import SubjectPage from './pages/SubjectPage';
+import PDFViewer from './pages/PDFViewer';
 import './App.css';
 
 function PrivateRoute({ children }) {
@@ -33,12 +33,11 @@ function App() {
     }, [dispatch]);
 
     return (
-        <ThemeProvider>
         <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <Routes>
                 <Route path="/" element={<Login />} />
+                <Route path="/login" element={<Login />} />
                 <Route path="/signup" element={<Signup />} />
-                <Route path="/verify-email" element={<VerifyEmail />} />
                 <Route
                     path="/dashboard/:uid"
                     element={
@@ -55,9 +54,26 @@ function App() {
                         </PrivateRoute>
                     }
                 />
+                <Route
+                    path="/books/:subject"
+                    element={
+                        <PrivateRoute>
+                            <SubjectPage />
+                        </PrivateRoute>
+                    }
+                />
+                <Route
+                    path="/books/:subject/chapter/:chapterId"
+                    element={
+                        <PrivateRoute>
+                            <PDFViewer />
+                        </PrivateRoute>
+                    }
+                />
+                {/* Catch-all: redirect unknown URLs to login */}
+                <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
         </Router>
-        </ThemeProvider>
     );
 }
 

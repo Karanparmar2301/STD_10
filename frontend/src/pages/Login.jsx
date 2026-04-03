@@ -18,10 +18,13 @@ function Login() {
         const result = await dispatch(loginUser({ email, password }));
 
         if (result.type === 'auth/login/fulfilled') {
-            localStorage.setItem('authToken', result.payload.token);
-            navigate(`/dashboard/${result.payload.uid}`);
-        } else if (result.payload === 'Email not verified') {
-            navigate('/verify-email');
+            const token = result.payload.token || result.payload.access_token;
+            const uid = result.payload.uid;
+            if (token) localStorage.setItem('authToken', token);
+            if (result.payload.refresh_token) {
+                localStorage.setItem('refreshToken', result.payload.refresh_token);
+            }
+            navigate(`/dashboard/${uid}`);
         }
     };
 
@@ -29,18 +32,19 @@ function Login() {
         <div className="auth-container">
             <div className="auth-card">
                 <div className="auth-header">
-                    <h1>🎓 Student Dashboard</h1>
+                    <h1>
+                        <span className="auth-emoji" aria-hidden="true">🎓</span>
+                        <span className="auth-title-text">Class 10 Portal</span>
+                    </h1>
                     <p>Welcome back! Please sign in to continue</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="auth-form">
                     {error && (
                         <div className="error-message">
-                            {error.includes('Invalid login credentials')
+                            {error.includes('Invalid login credentials') || error.includes('Invalid email')
                                 ? 'Email or password is incorrect'
-                                : error.includes('Email not verified')
-                                    ? 'Please verify your email before logging in'
-                                    : error}
+                                : error}
                         </div>
                     )}
 

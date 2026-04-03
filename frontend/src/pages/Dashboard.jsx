@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import { logoutUser } from '../store/authSlice';
-import { fetchStudentData, checkProfile } from '../store/studentSlice';
+import { checkProfile } from '../store/studentSlice';
 import { setActiveSection } from '../store/uiSlice';
 import { initializeGamification } from '../store/gamificationSlice';
 import { initializeAttendance } from '../store/attendanceSlice';
@@ -21,11 +21,12 @@ import DashboardOverview from '../components/DashboardOverview';
 import Attendance from '../components/Attendance';
 import Homework from '../components/Homework';
 import Announcements from '../components/Announcements';
-import Rewards from '../components/Rewards';
-import CelebrationScreen from '../components/CelebrationScreen';
+
+import Timetable from '../components/Timetable';
+import Performance from '../components/Performance';
 
 // Lazy-loaded sections
-const Games = lazy(() => import('../components/Games'));
+const Books = lazy(() => import('../components/Books'));
 const AIAssistant = lazy(() => import('../components/AIAssistant'));
 
 import './Dashboard.css';
@@ -35,7 +36,6 @@ function Dashboard() {
     const dispatch = useDispatch();
 
     const user = useSelector((state) => state.auth.user);
-    const studentData = useSelector((state) => state.student.profile);
     const { loading, error, profileExists } = useSelector((state) => state.student);
     const activeSection = useSelector((state) => state.ui.activeSection);
 
@@ -59,31 +59,31 @@ function Dashboard() {
     }, [profileExists]);
 
     useEffect(() => {
-        // Initialize all KPIs when student data loads
-        if (studentData) {
+        // Initialize all KPIs when user data loads
+        if (user && user.uid) {
             // Calculate streak from attendance data (default to 5 if not present)
-            const calculatedStreak = studentData.attendance_streak || studentData.streak || 5;
+            const calculatedStreak = user.attendance_streak || user.streak || 5;
             
             // Initialize gamification
             dispatch(initializeGamification({
-                totalXP: studentData.reward_points || 0,
+                totalXP: user.reward_points || 0,
                 streak: calculatedStreak,
-                badges: studentData.badges || [],
-                achievements: studentData.achievements || []
+                badges: user.badges || [],
+                achievements: user.achievements || []
             }));
 
             // Initialize attendance stats
             dispatch(initializeAttendance({
-                percentage: studentData.attendance_percentage || 95,
-                presentDays: studentData.present_days || 0,
-                absentDays: studentData.absent_days || 0,
-                totalDays: studentData.total_days || 0,
+                percentage: Math.round(user.attendance_percentage || 95),
+                presentDays: user.present_days || 0,
+                absentDays: user.absent_days || 0,
+                totalDays: user.total_days || 0,
                 streak: calculatedStreak
             }));
 
             // Homework is now database-driven and fetched in Homework component
         }
-    }, [studentData, dispatch]);
+    }, [user, dispatch]);
 
     useEffect(() => {
         // Listen for custom event to open edit profile drawer
@@ -109,10 +109,7 @@ function Dashboard() {
 
     const handleProfileComplete = () => {
         setShowCompletionModal(false);
-        // Refresh student data after profile completion
-        if (user?.uid) {
-            dispatch(fetchStudentData(user.uid));
-        }
+        // Profile complete - auth.user will be updated automatically
     };
 
     const handleEditProfile = () => {
@@ -121,14 +118,11 @@ function Dashboard() {
 
     const handleEditDrawerClose = () => {
         setShowEditDrawer(false);
-        // Refresh student data after edit
-        if (user?.uid) {
-            dispatch(fetchStudentData(user.uid));
-        }
+        // Profile updates auto-sync to auth.user via setUser dispatch
     };
 
     const renderSection = () => {
-        if (loading && !studentData) {
+        if (loading && !user) {
             return <SkeletonLoader type="profile" count={1} />;
         }
 
@@ -139,7 +133,7 @@ function Dashboard() {
                     <p>{typeof error === 'string' ? error : 'Server connection failed'}</p>
                     <button
                         className="retry-btn"
-                        onClick={() => user?.uid && dispatch(fetchStudentData(user.uid))}
+                        onClick={() => user?.uid && dispatch(checkProfile(user.uid))}
                     >
                         Retry
                     </button>
@@ -147,7 +141,7 @@ function Dashboard() {
             );
         }
 
-        if (!studentData) return null;
+        if (!user) return <SkeletonLoader type="profile" count={1} />;
 
         // Animation variants for section transitions
         const pageVariants = {
@@ -185,7 +179,7 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <Attendance profile={studentData} />
+                        <Attendance profile={user} />
                     </motion.div>
                 );
             case 'homework':
@@ -198,7 +192,7 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <Homework data={studentData} />
+                        <Homework data={user} />
                     </motion.div>
                 );
             case 'announcements':
@@ -211,26 +205,13 @@ function Dashboard() {
                         exit="exit"
                         transition={pageTransition}
                     >
-                        <Announcements data={studentData} />
+                        <Announcements data={user} />
                     </motion.div>
                 );
-            case 'rewards':
+            case 'books':
                 return (
                     <motion.div
-                        key="rewards"
-                        variants={pageVariants}
-                        initial="initial"
-                        animate="animate"
-                        exit="exit"
-                        transition={pageTransition}
-                    >
-                        <Rewards data={studentData} />
-                    </motion.div>
-                );
-            case 'games':
-                return (
-                    <motion.div
-                        key="games"
+                        key="books"
                         variants={pageVariants}
                         initial="initial"
                         animate="animate"
@@ -238,8 +219,34 @@ function Dashboard() {
                         transition={pageTransition}
                     >
                         <Suspense fallback={<SkeletonLoader type="card" count={3} />}>
-                            <Games data={studentData} />
+                            <Books data={user} />
                         </Suspense>
+                    </motion.div>
+                );
+            case 'performance':
+                return (
+                    <motion.div
+                        key="performance"
+                        variants={pageVariants}
+                        initial="initial"
+                        animate="animate"
+                        exit="exit"
+                        transition={pageTransition}
+                    >
+                        <Performance />
+                    </motion.div>
+                );
+            case 'timetable':
+                return (
+                    <motion.div
+                        key="timetable"
+                        variants={pageVariants}
+                        initial="initial"
+                        animate="animate"
+                        exit="exit"
+                        transition={pageTransition}
+                    >
+                        <Timetable />
                     </motion.div>
                 );
             case 'ai-assistant':
@@ -253,7 +260,7 @@ function Dashboard() {
                         transition={pageTransition}
                     >
                         <Suspense fallback={<SkeletonLoader type="card" count={1} />}>
-                            <AIAssistant data={studentData} />
+                            <AIAssistant data={user} />
                         </Suspense>
                     </motion.div>
                 );
@@ -273,7 +280,7 @@ function Dashboard() {
         }
     };
 
-    if (loading && !studentData) {
+    if (loading && !user) {
         return (
             <div className="loading-container">
                 <div className="spinner"></div>
@@ -282,7 +289,7 @@ function Dashboard() {
         );
     }
 
-    if (error && !studentData) {
+    if (error && !user) {
         return (
             <div className="dashboard-layout error-layout">
                 <div className="error-container full-page">
@@ -290,7 +297,7 @@ function Dashboard() {
                     <p>{typeof error === 'string' ? error : 'Could not connect to server'}</p>
                     <button
                         className="retry-btn"
-                        onClick={() => user?.uid && dispatch(fetchStudentData(user.uid))}
+                        onClick={() => user?.uid && dispatch(checkProfile(user.uid))}
                     >
                         Try Again
                     </button>
@@ -319,8 +326,7 @@ function Dashboard() {
                 </div>
             </div>
 
-            {/* Level-up Celebration Screen (global overlay) */}
-            <CelebrationScreen />
+
 
             {/* Profile Completion Modal (First Login) */}
             <ProfileCompletionModal
