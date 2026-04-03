@@ -4,7 +4,10 @@ Combines Qdrant vector search with payload keyword filtering for better accuracy
 Also supports multi-query expansion for unclear questions.
 """
 import re
-from .embeddings import embed_text, qdrant_client, COLLECTION_NAME
+import logging
+from .embeddings import embed_text, get_qdrant_client, COLLECTION_NAME
+
+logger = logging.getLogger(__name__)
 
 
 def _generate_sub_queries(question: str) -> list[str]:
@@ -34,13 +37,17 @@ def _generate_sub_queries(question: str) -> list[str]:
 
 def vector_search(question: str, limit: int = 6) -> list[dict]:
     """Semantic vector search in Qdrant."""
-    query_vector = embed_text(question)
-
-    results = qdrant_client.query_points(
-        collection_name=COLLECTION_NAME,
-        query=query_vector,
-        limit=limit
-    )
+    try:
+        query_vector = embed_text(question)
+        qdrant_client = get_qdrant_client()
+        results = qdrant_client.query_points(
+            collection_name=COLLECTION_NAME,
+            query=query_vector,
+            limit=limit
+        )
+    except Exception as e:
+        logger.warning("[RAG] Vector search failed: %s", e)
+        return []
 
     documents = []
     for result in results.points:
@@ -68,6 +75,12 @@ def keyword_search(question: str, limit: int = 4) -> list[dict]:
     keywords = [w for w in words if w not in stopwords]
 
     if not keywords:
+        return []
+
+    try:
+        qdrant_client = get_qdrant_client()
+    except Exception as e:
+        logger.warning("[RAG] Qdrant unavailable for keyword search: %s", e)
         return []
 
     # Use Qdrant scroll with text matching for each keyword
@@ -103,7 +116,8 @@ def keyword_search(question: str, limit: int = 4) -> list[dict]:
                         "score": 0.5,  # no vector score for keyword matches
                         "method": "keyword"
                     })
-        except Exception:
+        except Exception as e:
+            logger.debug("[RAG] Keyword search skipped for '%s': %s", kw, e)
             continue
 
     return documents[:limit]

@@ -12,6 +12,7 @@ Features:
 """
 import os
 import time
+import logging
 from datetime import datetime
 from dotenv import load_dotenv
 from groq import Groq
@@ -19,6 +20,8 @@ from groq import Groq
 from .retriever import hybrid_search
 from .reranker import rerank
 from .translator import detect_language, translate_to_english, translate_from_english
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True)
 load_dotenv()
@@ -102,8 +105,30 @@ def generate_answer(
     # 3. Hybrid search (vector + keyword + multi-query)
     raw_docs = hybrid_search(search_query)
 
+    if not raw_docs:
+        elapsed = time.time() - start
+        logger.info("[RAG] No documents retrieved for query: %s", search_query[:100])
+        return {
+            "answer": "Sorry, I couldn't find relevant information in the textbook.",
+            "sources": [],
+            "chunks_found": 0,
+            "elapsed_sec": round(elapsed, 2),
+            "language": lang,
+        }
+
     # 4. Re-rank for most relevant context (Top 10 → Reranker → Top 5)
     top_docs = rerank(search_query, raw_docs, top_k=5)
+
+    if not top_docs:
+        elapsed = time.time() - start
+        logger.info("[RAG] Re-ranker returned no documents for query: %s", search_query[:100])
+        return {
+            "answer": "Sorry, I couldn't find relevant information in the textbook.",
+            "sources": [],
+            "chunks_found": 0,
+            "elapsed_sec": round(elapsed, 2),
+            "language": lang,
+        }
 
     # 5. Build context with source citations
     context, sources = _build_context(top_docs)
