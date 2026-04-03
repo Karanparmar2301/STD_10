@@ -5,6 +5,7 @@ Thread-safe JSON file storage for user records.
 import json
 import logging
 import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Default path: users.json at the project root
 _DEFAULT_USERS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "users.json")
+_FALLBACK_USERS_PATH = os.path.join(tempfile.gettempdir(), "student-dashboard", "users.json")
 
 _storage_instance: Optional["UsersStorage"] = None
 _instance_lock = threading.Lock()
@@ -24,13 +26,48 @@ class UsersStorage:
     """Thread-safe persistent storage for user records backed by a JSON file."""
 
     def __init__(self, path: str = _DEFAULT_USERS_PATH):
-        self._path = Path(path)
+        env_path = os.getenv("USERS_STORE_PATH", "").strip()
+        requested_path = Path(env_path) if env_path else Path(path)
+
+        self._path = self._resolve_writable_path(requested_path)
         self._lock = threading.Lock()
         # Create file with empty dict if it doesn't exist
         if not self._path.exists():
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.write_text("{}", encoding="utf-8")
         logger.info("UsersStorage initialised at %s", self._path)
+
+    @staticmethod
+    def _resolve_writable_path(path: Path) -> Path:
+        """Use configured path when writable; otherwise fallback to a temp location."""
+        if UsersStorage._is_writable(path):
+            return path
+
+        fallback = Path(os.getenv("USERS_STORE_FALLBACK_PATH", _FALLBACK_USERS_PATH))
+        logger.warning("Users store path %s is not writable. Falling back to %s", path, fallback)
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        if not fallback.exists():
+            fallback.write_text("{}", encoding="utf-8")
+        return fallback
+
+    @staticmethod
+    def _is_writable(path: Path) -> bool:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+            # If file exists, verify append access.
+            if path.exists():
+                with path.open("a", encoding="utf-8"):
+                    pass
+                return True
+
+            # Otherwise, test write permission in parent directory.
+            probe = path.parent / ".users_store_write_probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return True
+        except OSError:
+            return False
 
     def load(self) -> Dict[str, Any]:
         """Load and return all users as a dict keyed by uid."""

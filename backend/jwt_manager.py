@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # ── Password hashing context ─────────────────────────────────────────────────
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_fallback_pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 @dataclass
@@ -39,13 +40,20 @@ class JWTManager:
     # ── Password helpers ─────────────────────────────────────────────────────
 
     def hash_password(self, plain: str) -> str:
-        return _pwd_context.hash(plain)
+        try:
+            return _pwd_context.hash(plain)
+        except Exception as e:
+            logger.warning("bcrypt hashing unavailable, using pbkdf2_sha256 fallback: %s", e)
+            return _fallback_pwd_context.hash(plain)
 
     def verify_password(self, plain: str, hashed: str) -> bool:
         try:
             return _pwd_context.verify(plain, hashed)
         except Exception:
-            return False
+            try:
+                return _fallback_pwd_context.verify(plain, hashed)
+            except Exception:
+                return False
 
     # ── Token creation ───────────────────────────────────────────────────────
 
