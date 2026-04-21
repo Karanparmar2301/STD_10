@@ -80,6 +80,11 @@ class JWTManager:
         except JWTError as e:
             logger.debug("JWT decode failed: %s", e)
             return TokenResult(valid=False, error=str(e))
+        except Exception as e:
+            # Some malformed tokens may raise non-JWTError exceptions
+            # (e.g., Unicode/ValueError while parsing header/payload).
+            logger.debug("JWT decode unexpected failure: %s", e)
+            return TokenResult(valid=False, error=str(e))
 
 
 def get_jwt_manager() -> JWTManager:

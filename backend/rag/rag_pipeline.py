@@ -78,6 +78,24 @@ def _build_context(docs: list[dict]) -> tuple[str, list[str]]:
     return context, sources
 
 
+def _merge_unique_docs(primary: list[dict], secondary: list[dict], limit: int = 20) -> list[dict]:
+    """Merge docs while de-duplicating by leading text snippet."""
+    merged: list[dict] = []
+    seen = set()
+    for doc in (primary or []) + (secondary or []):
+        text = (doc.get("text") or "").strip()
+        if not text:
+            continue
+        key = text[:220]
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(doc)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
 # ── Main pipeline ────────────────────────────────────────────────────────────
 def generate_answer(
     question: str,
@@ -102,8 +120,40 @@ def generate_answer(
     # 3. Hybrid search (vector + keyword + multi-query)
     raw_docs = hybrid_search(search_query)
 
+    # For non-English questions, also retrieve using original script.
+    # This improves recall when translation loses named entities.
+    if lang != "english" and question.strip() != search_query.strip():
+        native_docs = hybrid_search(question)
+        raw_docs = _merge_unique_docs(raw_docs, native_docs)
+
+    # Optional metadata filter from UI subject selector.
+    if subject_filter:
+        sf = subject_filter.strip().lower()
+        filtered_docs = [
+            d for d in raw_docs
+            if sf in str(d.get("source", "")).lower()
+        ]
+        if filtered_docs:
+            raw_docs = filtered_docs
+
     # 4. Re-rank for most relevant context (Top 10 → Reranker → Top 5)
-    top_docs = rerank(search_query, raw_docs, top_k=5)
+    local_only_docs = bool(raw_docs) and all(d.get("method") == "local" for d in raw_docs)
+    rerank_local = os.getenv("RAG_RERANK_LOCAL_FALLBACK", "0").lower() in {"1", "true", "yes"}
+    if local_only_docs and not rerank_local:
+        top_docs = sorted(raw_docs, key=lambda d: d.get("score", 0), reverse=True)[:5]
+    else:
+        top_docs = rerank(search_query, raw_docs, top_k=5)
+
+    # If retrieval fails or returns nothing, respond safely without throwing.
+    if not top_docs:
+        elapsed = time.time() - start
+        return {
+            "answer": "I don't know based on the provided context.",
+            "sources": [],
+            "chunks_found": 0,
+            "elapsed_sec": round(elapsed, 2),
+            "language": lang,
+        }
 
     # 5. Build context with source citations
     context, sources = _build_context(top_docs)
@@ -124,7 +174,7 @@ def generate_answer(
         if best_score < 0.40:
             elapsed = time.time() - start
             return {
-                "answer": "I cannot find the answer in the provided textbooks.",
+                "answer": "I don't know based on the provided context.",
                 "sources": [],
                 "chunks_found": 0,
                 "elapsed_sec": round(elapsed, 2),
@@ -134,38 +184,43 @@ def generate_answer(
     # 7. Generate answer with strict anti-hallucination prompt
     prompt = f"""You are a helpful Class 10 tutor assisting {student_name}.
 
-Answer the question ONLY using the provided textbook context.
-
 Rules:
-- Give a clear and simple answer.
-- Do NOT show page numbers.
-- Do NOT mention document names or file names.
-- Do NOT show sources.
-- Do NOT use your own knowledge.
-- If the answer is not present in the context, say:
-  "I cannot find the answer in the provided textbooks."
-- Keep answers student-friendly.
-- Use bullet points or numbered lists when explaining steps.
+- Answer ONLY using the provided CONTEXT.
+- If the answer is not present in CONTEXT, respond exactly: I don't know based on the provided context.
+- Do NOT use outside knowledge.
+- Do NOT mention page numbers, document names, or source file names.
+- Keep the answer concise and student-friendly.
+
 {memory_ctx}
-Context:
+CONTEXT:
 {context}
 
-Question:
+QUESTION:
 {search_query}
 
-Answer:"""
+ANSWER:"""
 
-    response = _groq.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "system", "content": "You are a textbook tutor. Answer ONLY from the given context. Never use your own knowledge. Never mention source names, file names, or page numbers in your answer."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.2,
-        max_tokens=1024,
-    )
-
-    answer = response.choices[0].message.content
+    try:
+        response = _groq.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": "You are a textbook tutor. Answer ONLY from the given context. Never use your own knowledge. Never mention source names, file names, or page numbers in your answer."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=1024,
+        )
+        answer = response.choices[0].message.content or ""
+    except Exception as e:
+        print(f"[RAG] Groq generation failed: {e}")
+        elapsed = time.time() - start
+        return {
+            "answer": "I am unable to generate an answer right now. Please try again.",
+            "sources": sources,
+            "chunks_found": len(top_docs),
+            "elapsed_sec": round(elapsed, 2),
+            "language": lang,
+        }
 
     # 8. Translate answer back if needed
     if lang != "english":

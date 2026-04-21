@@ -9,7 +9,6 @@ Usage:
 import os, sys, json, time
 from tqdm import tqdm
 from dotenv import load_dotenv
-from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
 
 # Ensure backend/.env is loaded
@@ -17,32 +16,17 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=True
 load_dotenv()
 
 from .chunker import chunk_documents
-from .embeddings import embedding_model, COLLECTION_NAME
-
-# ── DNS Workaround Patch (Fixes Errno 11001: getaddrinfo failed) ─────────────
-import socket
-_orig_getaddrinfo = socket.getaddrinfo
-def _patched_getaddrinfo(host, *args, **kwargs):
-    if host == "b999b3f4-d0c8-4c5c-8396-5b88400f7b82.us-west-1-0.aws.cloud.qdrant.io":
-        return _orig_getaddrinfo("52.8.48.156", *args, **kwargs)
-    return _orig_getaddrinfo(host, *args, **kwargs)
-socket.getaddrinfo = _patched_getaddrinfo
-# ─────────────────────────────────────────────────────────────────────────────
+from .embeddings import embedding_model, COLLECTION_NAME, get_qdrant_client
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "embeddings_cache.json")
 
 
 def reingest():
-    # Use a longer-timeout Qdrant client for uploads
-    qclient = QdrantClient(
-        url=os.getenv("QDRANT_URL"),
-        api_key=os.getenv("QDRANT_API_KEY"),
-        timeout=120,  # 2 minute timeout for large uploads
-    )
+    qclient = get_qdrant_client()
 
     # 1. Load and chunk PDFs
     print("=" * 60)
-    print("Step 1: Loading and chunking PDFs (chunk_size=500, overlap=120)")
+    print("Step 1: Loading and chunking PDFs")
     print("=" * 60)
     chunks = chunk_documents()
     print(f"\nTotal chunks: {len(chunks)}")
@@ -139,7 +123,10 @@ def reingest():
     print(f"\n{'=' * 60}")
     print(f"Done! Vectors in Qdrant: {count}")
     print(f"Collection: {COLLECTION_NAME}")
-    print(f"Chunk size: 500 | Overlap: 120")
+    print(
+        f"Chunk size: {os.getenv('RAG_CHUNK_SIZE_TOKENS', '500')} tokens | "
+        f"Overlap: {os.getenv('RAG_CHUNK_OVERLAP_TOKENS', '100')} tokens"
+    )
     print(f"{'=' * 60}")
 
     # Clean up cache

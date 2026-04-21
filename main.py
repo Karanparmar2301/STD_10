@@ -60,6 +60,24 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+def _warmup_local_retriever_index() -> None:
+    """Best-effort background warmup for local fallback retrieval index."""
+    warmup_enabled = os.getenv("RAG_WARMUP_LOCAL_INDEX", "1").lower() not in {"0", "false", "no"}
+    if not warmup_enabled:
+        return
+
+    local_fallback_enabled = os.getenv("LOCAL_RAG_FALLBACK_ENABLED", "1").lower() not in {"0", "false", "no"}
+    if not local_fallback_enabled:
+        return
+
+    try:
+        from backend.rag.local_retriever import local_keyword_search
+        local_keyword_search("warmup textbook index", limit=1)
+        logger.info("[RAG] Local fallback index warmup completed")
+    except Exception as e:
+        logger.warning(f"[RAG] Local fallback warmup failed: {e}")
+
 # ── Production Auth System Initialization ────────────────────────────────────
 # Old methods kept for backward compatibility (deprecated)
 def _load_users() -> dict:
@@ -100,6 +118,9 @@ logger.info("[OK] Exception handlers registered")
 async def _startup_build_rag_index():
     if RAG_ENGINE_AVAILABLE:
         logger.info("[RAG] Production pipeline loaded (hybrid search + reranker + Groq)")
+        import asyncio
+        asyncio.get_event_loop().run_in_executor(None, _warmup_local_retriever_index)
+        logger.info("[RAG] Local fallback warmup started in background")
     else:
         logger.warning("[RAG] Pipeline not available")
 
@@ -2011,14 +2032,24 @@ def _is_subject_question(message: str) -> bool:
 
 def _ai_classify(message: str) -> str:
     """Classify the intent of a student message."""
-    msg = message.lower().strip()
+    import re
 
-    math_keywords = ['+', '-', '*', '×', '÷', 'multiply', 'divide', 'plus', 'minus', 'times', 'added', 'subtracted']
-    if any(k in msg for k in math_keywords) and any(c.isdigit() for c in msg):
+    msg = message.lower().strip()
+    # Strip leading numbering like "1.", "2)", "3-" to avoid false intent matches.
+    msg = re.sub(r'^\s*\d+\s*[\).:]\s*', '', msg)
+
+    # Detect arithmetic only when two numbers are connected by an operator.
+    has_arithmetic_expression = bool(
+        re.search(r'\b\d+(?:\.\d+)?\s*[+\-*/×÷]\s*\d+(?:\.\d+)?\b', msg)
+    )
+    math_words = ['multiply', 'divide', 'plus', 'minus', 'times', 'added', 'subtracted']
+    if has_arithmetic_expression:
         return 'math'
-    if any(w in msg for w in ['what is', 'calculate', 'solve', 'answer', 'equals', 'how much']):
-        if any(c.isdigit() for c in msg):
-            return 'math'
+    if any(w in msg for w in math_words) and any(c.isdigit() for c in msg):
+        return 'math'
+    operation_cues = ['+', '-', '*', '/', '×', '÷', 'plus', 'minus', 'times', 'divide', 'multiply', 'equals']
+    if any(w in msg for w in ['what is', 'calculate', 'solve', 'answer', 'equals', 'how much']) and any(c.isdigit() for c in msg) and any(cue in msg for cue in operation_cues):
+        return 'math'
     if any(w in msg for w in ['spell', 'spelling', 'how do you spell', 'letters in', 'how to write']):
         return 'spelling'
     if any(w in msg for w in ['how am i', 'my progress', 'my xp', 'my level', 'how i am', 'doing', 'performance']):
@@ -2031,7 +2062,9 @@ def _ai_classify(message: str) -> str:
         return 'homework'
     if any(w in msg for w in ['game', 'play', 'fun', 'which game', 'what game']):
         return 'games'
-    if any(w in msg for w in ['hi', 'hello', 'hey', 'good morning', 'good moring', 'gud morning', 'gm', 'good afternoon', 'good evening', 'how are you', 'namaste', 'hola', 'wassup', 'whats up', "what's up", 'sup']):
+    greeting_terms = ['hi', 'hello', 'hey', 'good morning', 'good moring', 'gud morning', 'gm', 'good afternoon', 'good evening', 'how are you', 'namaste', 'hola', 'wassup', 'whats up', "what's up", 'sup']
+    # Treat as greeting only for short pure-greeting messages.
+    if any(w in msg for w in greeting_terms) and len(msg.split()) <= 4:
         return 'greeting'
     if any(w in msg for w in ['tired', 'bored', "can't", 'cant', 'hard', 'difficult', 'struggling', 'give up']):
         return 'motivation'
@@ -2318,7 +2351,14 @@ async def assistant_chat(
                 intent = "rag"
             except Exception as _rag_exc:
                 print(f"[RAG fallback] {_rag_exc}")
-                reply, suggestions = _build_ai_reply(intent, message, student_ctx)
+                reply = "I couldn't access the textbook search right now. Please try again in a moment."
+                suggestions = [
+                    "Try the same question again",
+                    "Ask a shorter textbook question",
+                    "Check if backend RAG is online",
+                    "Use subject-specific keywords",
+                ]
+                intent = "rag-fallback"
         else:
             reply, suggestions = _build_ai_reply(intent, message, student_ctx)
 
@@ -2386,6 +2426,27 @@ def _extract_image_text(image_bytes: bytes, mime_type: str) -> str:
         print(f"[image] text extraction failed: {e}")
         return ""
 
+
+def _merge_question_and_image_text(question: str, extracted: str, max_len: int = 3000) -> str:
+    """Merge user question with extracted image text while respecting request size limits."""
+    q = (question or "").strip()
+    x = " ".join((extracted or "").split()).strip()
+    if not x:
+        return q
+
+    image_cap = int(os.getenv("RAG_IMAGE_EXTRACT_MAX_CHARS", "2200"))
+    x = x[:image_cap]
+
+    if q:
+        prefix = "\n\n[Extracted from uploaded image]\n"
+        budget = max_len - len(q) - len(prefix)
+        if budget <= 0:
+            return q[:max_len]
+        x = x[:budget]
+        return f"{q}{prefix}{x}".strip()
+
+    return x[:max_len]
+
 @app.post("/chat")
 async def simple_chat(
     message: str = Form(...),
@@ -2403,8 +2464,7 @@ async def simple_chat(
         extracted = await asyncio.get_event_loop().run_in_executor(
             None, _extract_image_text, contents, mime
         )
-        if extracted:
-            question = f"{question} {extracted}".strip() if question else extracted
+        question = _merge_question_and_image_text(question, extracted, max_len=3000)
 
     import asyncio
     result = await asyncio.get_event_loop().run_in_executor(
@@ -2437,6 +2497,7 @@ async def rag_chat(
     Falls back to rule-based reply if Groq is unavailable.
     """
     try:
+        max_message_len = int(os.getenv("RAG_MAX_MESSAGE_CHARS", "3000"))
         message        = (message or "").strip()
         student_name   = (student_name or "Student")
         subject_filter = (subject_filter or "")
@@ -2449,12 +2510,23 @@ async def rag_chat(
             extracted = await _aio.get_event_loop().run_in_executor(
                 None, _extract_image_text, contents, mime
             )
-            if extracted:
-                message = f"{message} {extracted}".strip() if message else extracted
+            message = _merge_question_and_image_text(message, extracted, max_len=max_message_len)
+
+            if not extracted and not message:
+                return JSONResponse({
+                    "reply":        "I could not read text from the image. Please upload a clearer image or type the question in text.",
+                    "answer":       "I could not read text from the image. Please upload a clearer image or type the question in text.",
+                    "sources":      [],
+                    "chunks_found": 0,
+                    "elapsed_sec":  None,
+                    "suggestions":  ["Upload a clearer image", "Crop to only the question", "Type the question text"],
+                    "timestamp":    datetime.now().isoformat(),
+                    "intent":       "image-read-failed",
+                })
 
         if not message:
             raise HTTPException(status_code=400, detail="message is required")
-        if len(message) > 3000:
+        if len(message) > max_message_len:
             raise HTTPException(status_code=400, detail="Message too long")
 
         if not RAG_ENGINE_AVAILABLE:
@@ -2462,9 +2534,38 @@ async def rag_chat(
 
         import asyncio
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, rag_pipeline, message, student_name, subject_filter
-        )
+        rag_timeout = float(os.getenv("RAG_TIMEOUT_SECONDS", "90"))
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, rag_pipeline, message, student_name, subject_filter
+                ),
+                timeout=rag_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("RAG pipeline timed out in /api/assistant/rag-chat")
+            return JSONResponse({
+                "reply":        "Textbook engine is warming up. Please try the same question again in a few seconds.",
+                "answer":       "Textbook engine is warming up. Please try the same question again in a few seconds.",
+                "sources":      [],
+                "chunks_found": 0,
+                "elapsed_sec":  None,
+                "suggestions":  ["Ask the same question again", "Try a shorter textbook query", "Use subject keywords"],
+                "timestamp":    datetime.now().isoformat(),
+                "intent":       "rag-timeout",
+            })
+        except Exception as e:
+            logger.exception(f"RAG pipeline failure in /api/assistant/rag-chat: {e}")
+            return JSONResponse({
+                "reply":        "I don't know based on the provided context.",
+                "answer":       "I don't know based on the provided context.",
+                "sources":      [],
+                "chunks_found": 0,
+                "elapsed_sec":  None,
+                "suggestions":  ["Try a shorter question", "Check textbook topic", "Ask in English"],
+                "timestamp":    datetime.now().isoformat(),
+                "intent":       "rag-fallback",
+            })
 
         answer  = result.get("answer", "")
         sources = result.get("sources", [])

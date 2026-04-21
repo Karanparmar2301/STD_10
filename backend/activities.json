@@ -1,6 +1,52 @@
 {
   "41647fe0-1b2e-4800-a1d9-9684d7bb595b": [
     {
+      "event_id": "8841ea5b-e4f6-496a-9daa-6823844a74b7",
+      "user_id": "41647fe0-1b2e-4800-a1d9-9684d7bb595b",
+      "event_type": "BOOK_OPENED",
+      "title": "Opened Mathematics",
+      "description": "Browsing Mathematics chapters",
+      "subject": "Mathematics",
+      "xp_earned": 0,
+      "impact_score": 1,
+      "metadata": {
+        "subject_slug": "std_10_mathematics",
+        "chapter_count": 17
+      },
+      "timestamp": "2026-04-20T10:13:18.947843+00:00Z"
+    },
+    {
+      "event_id": "fb2df82a-b8c5-43bd-9e09-4d7b03a5b91d",
+      "user_id": "41647fe0-1b2e-4800-a1d9-9684d7bb595b",
+      "event_type": "PDF_VIEWED",
+      "title": "Reading: Chapter 14",
+      "description": "Opened Chapter 14 from std_10_mathematics",
+      "subject": "std_10_mathematics",
+      "xp_earned": 0,
+      "impact_score": 1,
+      "metadata": {
+        "chapter_id": "16",
+        "subject_slug": "std_10_mathematics",
+        "pdf_url": "/uploads/std_10_mathematics/chapter 14.pdf"
+      },
+      "timestamp": "2026-04-20T10:13:15.510132+00:00Z"
+    },
+    {
+      "event_id": "4aab72ae-a72b-4a6a-84fd-8b401f2dcfd7",
+      "user_id": "41647fe0-1b2e-4800-a1d9-9684d7bb595b",
+      "event_type": "BOOK_OPENED",
+      "title": "Opened Mathematics",
+      "description": "Browsing Mathematics chapters",
+      "subject": "Mathematics",
+      "xp_earned": 0,
+      "impact_score": 1,
+      "metadata": {
+        "subject_slug": "std_10_mathematics",
+        "chapter_count": 17
+      },
+      "timestamp": "2026-04-20T10:13:12.424149+00:00Z"
+    },
+    {
       "event_id": "9bef1ce1-f99b-4a97-aeaf-1eeca0c8792d",
       "user_id": "41647fe0-1b2e-4800-a1d9-9684d7bb595b",
       "event_type": "BOOK_OPENED",
@@ -1487,48 +1533,6 @@
         "filename": "41647fe0-1b2e-4800-a1d9-9684d7bb595b_20260302_173958.jpg"
       },
       "timestamp": "2026-03-02T12:09:58.958109Z"
-    },
-    {
-      "event_id": "82322627-fce4-4c82-90ee-6dd519a0ff78",
-      "user_id": "41647fe0-1b2e-4800-a1d9-9684d7bb595b",
-      "event_type": "profile_photo_updated",
-      "title": "Profile Photo Updated",
-      "description": "Uploaded new profile photo",
-      "subject": null,
-      "xp_earned": 0,
-      "impact_score": 1,
-      "metadata": {
-        "filename": "41647fe0-1b2e-4800-a1d9-9684d7bb595b_20260302_172805.jpg"
-      },
-      "timestamp": "2026-03-02T11:58:05.656289Z"
-    },
-    {
-      "event_id": "8be9c0c4-d0f7-4218-927a-12a7cb7fb6b1",
-      "user_id": "41647fe0-1b2e-4800-a1d9-9684d7bb595b",
-      "event_type": "profile_photo_updated",
-      "title": "Profile Photo Updated",
-      "description": "Uploaded new profile photo",
-      "subject": null,
-      "xp_earned": 0,
-      "impact_score": 1,
-      "metadata": {
-        "filename": "41647fe0-1b2e-4800-a1d9-9684d7bb595b_20260302_172741.jpg"
-      },
-      "timestamp": "2026-03-02T11:57:41.471026Z"
-    },
-    {
-      "event_id": "d51fb6bf-16b8-40d0-9266-80aa1823446b",
-      "user_id": "41647fe0-1b2e-4800-a1d9-9684d7bb595b",
-      "event_type": "profile_photo_updated",
-      "title": "Profile Photo Updated",
-      "description": "Uploaded new profile photo",
-      "subject": null,
-      "xp_earned": 0,
-      "impact_score": 1,
-      "metadata": {
-        "filename": "41647fe0-1b2e-4800-a1d9-9684d7bb595b_20260302_170509.jpg"
-      },
-      "timestamp": "2026-03-02T11:35:09.847756Z"
     }
   ],
   "d2a595ea-e7e6-4441-90ee-bd759120bb99": [

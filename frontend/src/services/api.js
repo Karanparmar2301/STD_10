@@ -2,6 +2,10 @@ import axios from 'axios';
 
 // All requests go through the Vite proxy (both dev and prod)
 const API_BASE_URL = '/api';
+const configuredRagTimeout = Number(import.meta.env.VITE_RAG_TIMEOUT_MS);
+const RAG_TIMEOUT_MS = Number.isFinite(configuredRagTimeout) && configuredRagTimeout > 0
+    ? configuredRagTimeout
+    : 120000;
 
 // Auth endpoints also go through the Vite proxy
 const AUTH_BASE_URL = '';
@@ -186,6 +190,7 @@ export const apiService = {
         }
         return api.post('/assistant/rag-chat', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: RAG_TIMEOUT_MS,
         });
     },
     rebuildRagIndex: () => api.post('/assistant/rebuild-index'),

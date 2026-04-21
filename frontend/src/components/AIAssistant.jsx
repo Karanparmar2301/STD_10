@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react';
-import { Plus, SendHorizonal } from 'lucide-react';
+import { Plus, SendHorizonal, Trash2 } from 'lucide-react';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -21,6 +21,13 @@ const formatContent = (text) =>
       : part
   );
 
+const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ''));
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+
 const bubbleVariants = {
   hidden:  { opacity: 0, y: 14, scale: 0.97 },
   visible: { opacity: 1, y: 0,  scale: 1, transition: { duration: 0.22, ease: 'easeOut' } },
@@ -33,7 +40,6 @@ const TypingIndicator = memo(() => (
     <div className="aia-typing">
       <span /><span /><span />
     </div>
-    <div className="aia-avatar">🤖</div>
   </div>
 ));
 TypingIndicator.displayName = 'TypingIndicator';
@@ -41,6 +47,7 @@ TypingIndicator.displayName = 'TypingIndicator';
 const MessageBubble = memo(({ msg }) => {
   const isUser = msg.role === 'user';
   const hasSources = !isUser && msg.sources && msg.sources.length > 0;
+  const content = typeof msg.content === 'string' ? msg.content : '';
   return (
     <motion.div
       className={`aia-bubble ${isUser ? 'aia-bubble-user' : 'aia-bubble-ai'}`}
@@ -48,9 +55,14 @@ const MessageBubble = memo(({ msg }) => {
       initial="hidden"
       animate="visible"
     >
-      {isUser && <div className="aia-avatar aia-avatar-user">🧒</div>}
       <div className={`aia-bubble-text${msg.isError ? ' aia-bubble-error' : ''}`}>
-        {msg.content.split('\n').map((line, i, arr) => (
+        {msg.imageUrl && (
+          <div className="aia-bubble-media">
+            <img src={msg.imageUrl} alt="Uploaded" loading="lazy" />
+          </div>
+        )}
+
+        {content.split('\n').map((line, i, arr) => (
           <span key={i}>
             {formatContent(line)}
             {i < arr.length - 1 && <br />}
@@ -58,7 +70,6 @@ const MessageBubble = memo(({ msg }) => {
         ))}
 
       </div>
-      {!isUser && <div className="aia-avatar">🤖</div>}
     </motion.div>
   );
 });
@@ -91,6 +102,15 @@ function AIAssistant({ data }) {
     inputRef.current?.focus();
   }, []);
 
+  // Revoke pending upload preview URL whenever it is replaced/unmounted.
+  useEffect(() => {
+    return () => {
+      if (imagePreview?.startsWith('blob:')) {
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [imagePreview]);
+
   // Derive mode from messages - welcome when empty, chat when messages exist
   const mode = messages.length === 0 ? 'welcome' : 'chat';
 
@@ -102,19 +122,33 @@ function AIAssistant({ data }) {
   }, [messages, isTyping]);
 
   const handleSend = useCallback(
-    (textOverride) => {
+    async (textOverride) => {
       const text = (typeof textOverride === 'string' ? textOverride : input).trim();
       if ((!text && !image) || isTyping) return;
-      const displayText = image ? `${text || ''} 📷 Image attached`.trim() : text;
-      dispatch(addUserMessage(displayText));
+
+      let imageUrl = null;
+      if (image) {
+        try {
+          imageUrl = await fileToDataUrl(image);
+        } catch {
+          imageUrl = null;
+        }
+      }
+
+      const displayText = image ? (text || '📷 Image attached') : text;
+      dispatch(addUserMessage({ content: displayText, imageUrl }));
       dispatch(sendChatMessage({ uid, message: text, studentName, image }));
       setInput('');
       setImage(null);
+
+      if (imagePreview?.startsWith('blob:')) {
+        URL.revokeObjectURL(imagePreview);
+      }
       setImagePreview(null);
       if (fileRef.current) fileRef.current.value = '';
       inputRef.current?.focus();
     },
-    [input, image, isTyping, uid, studentName, dispatch]
+    [input, image, imagePreview, isTyping, uid, studentName, dispatch]
   );
 
   // Explicit textbook RAG search (bypasses personal-data routing)
@@ -144,12 +178,22 @@ function AIAssistant({ data }) {
       alert('Image must be under 5 MB');
       return;
     }
+
+    if (imagePreview?.startsWith('blob:')) {
+      URL.revokeObjectURL(imagePreview);
+    }
+
     setImage(file);
     setImagePreview(URL.createObjectURL(file));
   };
 
   const handleRemoveImage = () => {
     setImage(null);
+
+    if (imagePreview?.startsWith('blob:')) {
+      URL.revokeObjectURL(imagePreview);
+    }
+
     setImagePreview(null);
     if (fileRef.current) fileRef.current.value = '';
   };
@@ -203,12 +247,6 @@ function AIAssistant({ data }) {
 
       {/* ── Sticky Input ── */}
       <div className="aia-input-zone">
-        {hasMessages && (
-          <button className="aia-clear-btn" onClick={handleClearChat}>
-            🗑 Clear
-          </button>
-        )}
-
         {/* Image preview strip */}
         {imagePreview && (
           <div className="aia-image-preview">
@@ -217,44 +255,58 @@ function AIAssistant({ data }) {
           </div>
         )}
 
-        <div className="aia-input-box">
-          {/* Image upload button */}
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            hidden
-          />
-          <button
-            className="aia-upload-btn"
-            title="Attach image"
-            onClick={() => fileRef.current?.click()}
-            type="button"
-          >
-            <Plus size={18} strokeWidth={2.5} />
-          </button>
+        <div className="aia-input-controls">
+          {hasMessages && (
+            <button
+              className="aia-clear-btn"
+              onClick={handleClearChat}
+              type="button"
+              aria-label="Clear chat history"
+            >
+              <Trash2 className="aia-clear-btn-icon" size={14} strokeWidth={2.1} aria-hidden="true" />
+              <span>Clear chat</span>
+            </button>
+          )}
 
-          <textarea
-            ref={inputRef}
-            className="aia-textarea"
-            rows={1}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask me anything... (Enter to send, Shift+Enter for newline)"
-            disabled={isTyping}
-          />
-          <motion.button
-            className={`aia-send-btn${(!input.trim() && !image || isTyping) ? ' aia-send-disabled' : ''}`}
-            onClick={handleSend}
-            disabled={(!input.trim() && !image) || isTyping}
-            whileHover={(input.trim() || image) && !isTyping ? { scale: 1.08 } : {}}
-            whileTap={(input.trim() || image) && !isTyping ? { scale: 0.95 } : {}}
-            aria-label="Send message"
-          >
-            <SendHorizonal size={17} strokeWidth={2.2} />
-          </motion.button>
+          <div className="aia-input-box">
+            {/* Image upload button */}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              hidden
+            />
+            <button
+              className="aia-upload-btn"
+              title="Attach image"
+              onClick={() => fileRef.current?.click()}
+              type="button"
+            >
+              <Plus size={18} strokeWidth={2.5} />
+            </button>
+
+            <textarea
+              ref={inputRef}
+              className="aia-textarea"
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask me anything... (Enter to send, Shift+Enter for newline)"
+              disabled={isTyping}
+            />
+            <motion.button
+              className={`aia-send-btn${(!input.trim() && !image || isTyping) ? ' aia-send-disabled' : ''}`}
+              onClick={handleSend}
+              disabled={(!input.trim() && !image) || isTyping}
+              whileHover={(input.trim() || image) && !isTyping ? { scale: 1.08 } : {}}
+              whileTap={(input.trim() || image) && !isTyping ? { scale: 0.95 } : {}}
+              aria-label="Send message"
+            >
+              <SendHorizonal size={17} strokeWidth={2.2} />
+            </motion.button>
+          </div>
         </div>
       </div>
     </div>

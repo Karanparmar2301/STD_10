@@ -3,8 +3,77 @@ retriever.py — Hybrid search: Vector (semantic) + Keyword (exact match).
 Combines Qdrant vector search with payload keyword filtering for better accuracy.
 Also supports multi-query expansion for unclear questions.
 """
+import os
 import re
-from .embeddings import embed_text, qdrant_client, COLLECTION_NAME
+import time
+from .embeddings import embed_text, get_qdrant_client, get_qdrant_urls, COLLECTION_NAME
+
+_qdrant_health_cache = {
+    "ok": None,
+    "checked_at": 0.0,
+}
+
+
+def _is_qdrant_available(cache_ttl_sec: int = 20) -> bool:
+    now = time.time()
+    cached_ok = _qdrant_health_cache["ok"]
+    checked_at = _qdrant_health_cache["checked_at"]
+    if cached_ok is not None and (now - checked_at) < cache_ttl_sec:
+        return bool(cached_ok)
+
+    for url in get_qdrant_urls():
+        client = get_qdrant_client(url)
+        try:
+            client.get_collections()
+            _qdrant_health_cache["ok"] = True
+            _qdrant_health_cache["checked_at"] = now
+            return True
+        except Exception:
+            continue
+
+    _qdrant_health_cache["ok"] = False
+    _qdrant_health_cache["checked_at"] = now
+    return False
+
+
+def _query_points_with_failover(query_vector, limit: int):
+    last_error = None
+    for url in get_qdrant_urls():
+        client = get_qdrant_client(url)
+        for attempt in range(2):
+            try:
+                return client.query_points(
+                    collection_name=COLLECTION_NAME,
+                    query=query_vector,
+                    limit=limit,
+                )
+            except Exception as e:
+                last_error = e
+                if attempt == 0:
+                    continue
+                print(f"[Retriever] query_points failed on {url}: {e}")
+    raise last_error if last_error else RuntimeError("Qdrant query failed")
+
+
+def _scroll_with_failover(scroll_filter, limit: int):
+    last_error = None
+    for url in get_qdrant_urls():
+        client = get_qdrant_client(url)
+        for attempt in range(2):
+            try:
+                return client.scroll(
+                    collection_name=COLLECTION_NAME,
+                    scroll_filter=scroll_filter,
+                    limit=limit,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+            except Exception as e:
+                last_error = e
+                if attempt == 0:
+                    continue
+                print(f"[Retriever] scroll failed on {url}: {e}")
+    raise last_error if last_error else RuntimeError("Qdrant scroll failed")
 
 
 def _generate_sub_queries(question: str) -> list[str]:
@@ -34,20 +103,27 @@ def _generate_sub_queries(question: str) -> list[str]:
 
 def vector_search(question: str, limit: int = 6) -> list[dict]:
     """Semantic vector search in Qdrant."""
-    query_vector = embed_text(question)
+    if not _is_qdrant_available():
+        return []
 
-    results = qdrant_client.query_points(
-        collection_name=COLLECTION_NAME,
-        query=query_vector,
-        limit=limit
-    )
+    try:
+        query_vector = embed_text(question)
+        results = _query_points_with_failover(query_vector, limit=limit)
+    except Exception as e:
+        # Keep chat alive even when Qdrant URL/collection is misconfigured.
+        print(f"[Retriever] vector_search failed: {e}")
+        return []
 
     documents = []
-    for result in results.points:
+    for result in getattr(results, "points", []) or []:
+        payload = result.payload or {}
+        text = payload.get("text")
+        if not text:
+            continue
         documents.append({
-            "text": result.payload["text"],
-            "source": result.payload["source"],
-            "page": result.payload["page"],
+            "text": text,
+            "source": payload.get("source", "Unknown source"),
+            "page": payload.get("page", "N/A"),
             "score": result.score,
             "method": "vector"
         })
@@ -70,6 +146,9 @@ def keyword_search(question: str, limit: int = 4) -> list[dict]:
     if not keywords:
         return []
 
+    if not _is_qdrant_available():
+        return []
+
     # Use Qdrant scroll with text matching for each keyword
     documents = []
     seen_texts = set()
@@ -77,8 +156,7 @@ def keyword_search(question: str, limit: int = 4) -> list[dict]:
     for kw in keywords[:3]:  # max 3 keywords
         try:
             from qdrant_client.models import Filter, FieldCondition, MatchText
-            results = qdrant_client.scroll(
-                collection_name=COLLECTION_NAME,
+            results = _scroll_with_failover(
                 scroll_filter=Filter(
                     must=[
                         FieldCondition(
@@ -88,18 +166,20 @@ def keyword_search(question: str, limit: int = 4) -> list[dict]:
                     ]
                 ),
                 limit=limit,
-                with_payload=True,
-                with_vectors=False,
             )
 
             for point in results[0]:  # scroll returns (points, next_offset)
-                text_snippet = point.payload["text"][:200]
+                payload = point.payload or {}
+                text = payload.get("text")
+                if not text:
+                    continue
+                text_snippet = text[:200]
                 if text_snippet not in seen_texts:
                     seen_texts.add(text_snippet)
                     documents.append({
-                        "text": point.payload["text"],
-                        "source": point.payload["source"],
-                        "page": point.payload["page"],
+                        "text": text,
+                        "source": payload.get("source", "Unknown source"),
+                        "page": payload.get("page", "N/A"),
                         "score": 0.5,  # no vector score for keyword matches
                         "method": "keyword"
                     })
@@ -134,6 +214,21 @@ def hybrid_search(question: str, vector_k: int = 8, keyword_k: int = 5) -> list[
         if snippet not in seen_texts:
             seen_texts.add(snippet)
             all_docs.append(doc)
+
+    # Local fallback retrieval when Qdrant is unavailable or returns no hits.
+    local_fallback_enabled = os.getenv("LOCAL_RAG_FALLBACK_ENABLED", "1").lower() not in {"0", "false", "no"}
+    if not all_docs and local_fallback_enabled:
+        try:
+            from .local_retriever import local_keyword_search
+
+            fallback_docs = local_keyword_search(question, limit=max(vector_k, keyword_k, 8))
+            for doc in fallback_docs:
+                snippet = doc["text"][:200]
+                if snippet not in seen_texts:
+                    seen_texts.add(snippet)
+                    all_docs.append(doc)
+        except Exception as e:
+            print(f"[Retriever] local fallback failed: {e}")
 
     # Sort by score descending
     all_docs.sort(key=lambda d: d["score"], reverse=True)

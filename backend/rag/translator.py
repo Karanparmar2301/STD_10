@@ -16,6 +16,30 @@ _groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 # Unicode ranges for Devanagari (Hindi/Sanskrit) and Gujarati script
 _DEVANAGARI = re.compile(r'[\u0900-\u097F]')
 _GUJARATI = re.compile(r'[\u0A80-\u0AFF]')
+_LATIN = re.compile(r'[A-Za-z]')
+
+
+def _is_reasonable_english_translation(original: str, translated: str) -> bool:
+    """Reject pathological outputs (wrong script, very long hallucinated text)."""
+    candidate = (translated or "").strip()
+    if not candidate:
+        return False
+
+    max_len = max(220, int(len(original or "") * 5))
+    if len(candidate) > max_len:
+        return False
+
+    latin_n = len(_LATIN.findall(candidate))
+    dev_n = len(_DEVANAGARI.findall(candidate))
+    guj_n = len(_GUJARATI.findall(candidate))
+    if latin_n == 0:
+        return False
+
+    non_latin_n = dev_n + guj_n
+    if non_latin_n > max(2, latin_n // 5):
+        return False
+
+    return True
 
 
 def detect_language(text: str) -> str:
@@ -39,9 +63,14 @@ def translate_to_english(text: str, source_lang: str) -> str:
                 {"role": "user", "content": text}
             ],
             temperature=0.1,
-            max_tokens=500
+            max_tokens=120
         )
-        return response.choices[0].message.content.strip()
+        translated = (response.choices[0].message.content or "").strip()
+        if _is_reasonable_english_translation(text, translated):
+            return translated
+
+        print("[Translator] to-English validation failed; using original query")
+        return text
     except Exception as e:
         print(f"[Translator] to-English failed: {e}")
         return text
