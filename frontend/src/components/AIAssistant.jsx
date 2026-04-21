@@ -44,7 +44,7 @@ const TypingIndicator = memo(() => (
 ));
 TypingIndicator.displayName = 'TypingIndicator';
 
-const MessageBubble = memo(({ msg }) => {
+const MessageBubble = memo(({ msg, onImageClick }) => {
   const isUser = msg.role === 'user';
   const hasSources = !isUser && msg.sources && msg.sources.length > 0;
   const content = typeof msg.content === 'string' ? msg.content : '';
@@ -58,7 +58,14 @@ const MessageBubble = memo(({ msg }) => {
       <div className={`aia-bubble-text${msg.isError ? ' aia-bubble-error' : ''}`}>
         {msg.imageUrl && (
           <div className="aia-bubble-media">
-            <img src={msg.imageUrl} alt="Uploaded" loading="lazy" />
+            <button
+              type="button"
+              className="aia-bubble-media-btn"
+              onClick={() => onImageClick?.(msg.imageUrl)}
+              aria-label="Open image preview"
+            >
+              <img src={msg.imageUrl} alt="Uploaded" loading="lazy" />
+            </button>
           </div>
         )}
 
@@ -85,6 +92,7 @@ function AIAssistant({ data }) {
   const [input, setInput] = useState('');
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [activeImage, setActiveImage] = useState(null);
   const chatRef  = useRef(null);
   const inputRef = useRef(null);
   const fileRef  = useRef(null);
@@ -120,6 +128,17 @@ function AIAssistant({ data }) {
       chatRef.current.scrollTop = chatRef.current.scrollHeight;
     }
   }, [messages, isTyping]);
+
+  useEffect(() => {
+    if (!activeImage) return;
+
+    const onEsc = (event) => {
+      if (event.key === 'Escape') setActiveImage(null);
+    };
+
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [activeImage]);
 
   const handleSend = useCallback(
     async (textOverride) => {
@@ -235,7 +254,7 @@ function AIAssistant({ data }) {
 
                 <AnimatePresence initial={false}>
                   {messages.map((msg) => (
-                    <MessageBubble key={msg.id} msg={msg} />
+                    <MessageBubble key={msg.id} msg={msg} onImageClick={setActiveImage} />
                   ))}
                   {isTyping && <TypingIndicator key="typing" />}
                 </AnimatePresence>
@@ -249,9 +268,17 @@ function AIAssistant({ data }) {
       <div className="aia-input-zone">
         {/* Image preview strip */}
         {imagePreview && (
-          <div className="aia-image-preview">
-            <img src={imagePreview} alt="Upload preview" />
-            <button className="aia-image-remove" onClick={handleRemoveImage}>✕</button>
+          <div className="aia-image-preview" role="status" aria-live="polite">
+            <button
+              type="button"
+              className="aia-image-preview-thumb"
+              onClick={() => setActiveImage(imagePreview)}
+              aria-label="Open selected image"
+            >
+              <img src={imagePreview} alt="Upload preview" />
+            </button>
+            <span className="aia-image-preview-label">Image ready</span>
+            <button className="aia-image-remove" onClick={handleRemoveImage} type="button">✕</button>
           </div>
         )}
 
@@ -309,6 +336,38 @@ function AIAssistant({ data }) {
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {activeImage && (
+          <motion.div
+            className="aia-image-lightbox"
+            onClick={() => setActiveImage(null)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.16 }}
+          >
+            <motion.img
+              src={activeImage}
+              alt="Expanded preview"
+              className="aia-image-lightbox-content"
+              initial={{ scale: 0.95, opacity: 0.92 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.98, opacity: 0.95 }}
+              transition={{ duration: 0.16 }}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              type="button"
+              className="aia-image-lightbox-close"
+              onClick={() => setActiveImage(null)}
+              aria-label="Close image preview"
+            >
+              ✕
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
